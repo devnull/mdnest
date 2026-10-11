@@ -507,6 +507,10 @@ mdnest's backend reaches out to `api.github.com` once per hour to check whether 
 - **Opt-out.** Set `DISABLE_UPDATE_CHECK=true` in `mdnest.conf` for air-gapped or privacy-sensitive installs. The badge disappears and the goroutine never starts. Set `UPDATE_CHECK_REPO=<owner>/<repo>` to point at a fork instead of upstream.
 - **User IPs.** End-user browsers do not contact GitHub. The check happens server-side; the client only reads the cached result from `/api/config`.
 
+### Drawing fonts load from a public CDN *(browser side)*
+
+The drawing editor (Excalidraw) does not ship its handwriting fonts inside mdnest's build. The first time a browser opens a drawing, it downloads them from `https://esm.sh/@excalidraw/excalidraw@<version>/dist/prod/fonts/`. That request comes from the user's browser, not the server, and it carries no note content: only the font file is requested. On a network with no internet access the request fails and drawings still work, with text shown in a plain fallback font. We found no other part of the web app that loads anything from outside your install. For v4.8.5 this was checked by recording a browser's requests while signing in, reading notes and drawing, and by searching the frontend source for outside URLs.
+
 ### Per-workspace git credentials — sealing, fail-closed & rotation *(multi mode)*
 
 When a namespace mirrors to its own repository (Admin → Namespaces → Git backup, on git storage only), the supplied credential — an HTTPS PAT or an SSH private key, the most sensitive data mdnest holds — is sealed at rest with **AES-256-GCM** in the `workspaces` (and `workspace_groups`) table. The key is derived (SHA-256) from `MDNEST_ENCRYPTION_KEY`, which falls back to `MDNEST_JWT_SECRET`.

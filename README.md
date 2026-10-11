@@ -6,7 +6,7 @@ mdnest is a notes app you run yourself. Every note is an ordinary Markdown file
 in a folder you chose — so you can open it in mdnest, `grep` it from a terminal,
 or let an AI agent read and edit it, and it is always the same file.
 
-No cloud account. No database to feed. Nothing leaves your machine.
+No cloud account. No database to feed. Your notes stay on your machine.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dark-app.webp">
@@ -351,7 +351,7 @@ You write; it saves the history. That gives you an off-box backup, a full
 version history for every note, and a restore button inside the app — and the
 backup is an ordinary git repo you can clone, `grep` and read without mdnest.
 
-Your notes are private by default. Nothing leaves your machine unless you choose to enable sync.
+Your notes are private by default: they are not sent anywhere unless you choose to enable sync. Two things reach the internet by default. The server asks GitHub about once an hour whether a newer release exists (set `DISABLE_UPDATE_CHECK=true` to turn it off), and the drawing editor loads its fonts from a public CDN; without internet access, drawings fall back to a plain font. See [docs/security.md](docs/security.md).
 
 To back up to a private GitHub repo:
 
