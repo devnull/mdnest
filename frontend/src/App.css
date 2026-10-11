@@ -6911,8 +6911,9 @@ pre:hover .code-copy-btn {
   color: var(--text);
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
-  padding: 1px 6px;
-  margin-right: 6px;
+  padding: 2px 8px;
+  align-self: center;
+  white-space: nowrap;
   cursor: pointer;
 }
 .approvals-badge:hover { background: var(--warning-wash-3); }

@@ -162,6 +162,9 @@ test.describe('agent approvals', () => {
     await page.goto('/');
     const badge = page.getByTestId('approvals-badge');
     await expect(badge).toHaveText('1 waiting', { timeout: 10_000 });
+    // It sits with the Chats button in the toolbar, not in the sidebar footer.
+    await expect(page.locator('.toolbar [data-testid="approvals-badge"]')).toHaveCount(1);
+    await expect(page.locator('.sidebar [data-testid="approvals-badge"]')).toHaveCount(0);
     await badge.click();
     const panel = page.getByRole('dialog', { name: 'Agent approvals' });
     await expect(panel.getByTestId('approval-command')).toHaveText('terraform apply');

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
-function Toolbar({ currentPath, onToggleSidebar, onRevealInTree, onChangePassword, onManageUsers, onRename, onDelete, viewMode, onViewModeChange, editorMode, onEditorModeChange, onRefresh, wsStatus, commentCount, onToggleComments, onToggleStickies, stickiesOpen, onSetBoardActive, boardActive, onSetChatsActive, chatsActive, chatsBackLabel, marpLocked, liveLockReason, mobileView, onMobileViewChange, drawingDoc, drawingSource, onDrawingSourceChange, theme, onToggleTheme, presence }) {
+function Toolbar({ currentPath, onToggleSidebar, onRevealInTree, onChangePassword, onManageUsers, onRename, onDelete, viewMode, onViewModeChange, editorMode, onEditorModeChange, onRefresh, wsStatus, commentCount, onToggleComments, onToggleStickies, stickiesOpen, onSetBoardActive, boardActive, onSetChatsActive, chatsActive, chatsBackLabel, marpLocked, liveLockReason, mobileView, onMobileViewChange, drawingDoc, drawingSource, onDrawingSourceChange, theme, onToggleTheme, presence, approvalCount = 0, onShowApprovals }) {
   const [refreshing, setRefreshing] = useState(false);
   // Phone overflow menu. On a phone the bar keeps only what is used per note
   // (sidebar, filename, comments, the mode switch); every other control lives
@@ -117,6 +117,20 @@ function Toolbar({ currentPath, onToggleSidebar, onRevealInTree, onChangePasswor
             <path d="M9.6 7.4a6.6 6.6 0 1 1-3.4 12.3L2.3 20.8l1.1-3.7A6.6 6.6 0 0 1 9.6 7.4z" fill="currentColor" mask="url(#chats-icon-dots)"/>
           </svg>
           <span>Chats</span>
+        </button>
+      )}
+      {/* Agent approvals belong with chats: most requests arrive in a chat,
+          so the count sits beside the Chats button (and beside Back while a
+          chat is open) rather than in the sidebar footer. */}
+      {approvalCount > 0 && onShowApprovals && (
+        <button
+          type="button"
+          className="approvals-badge"
+          data-testid="approvals-badge"
+          onClick={onShowApprovals}
+          title={`${approvalCount} agent request${approvalCount === 1 ? '' : 's'} waiting for you`}
+        >
+          {approvalCount} waiting
         </button>
       )}
       </div>

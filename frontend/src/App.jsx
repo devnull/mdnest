@@ -2228,8 +2228,6 @@ function App() {
             : null
         }
         onShowReleaseNotes={() => setShowReleaseNotes(true)}
-        approvalCount={approvalsEnabled ? approvals.length + notices.length : 0}
-        onShowApprovals={() => setShowApprovals(true)}
         revealNonce={revealNonce}
         width={sidebarWidth}
         onResize={setSidebarWidth}
@@ -2273,6 +2271,8 @@ function App() {
           onSetBoardActive={taskBoardEnabled && selectedNs ? setBoardActive : null}
           onSetChatsActive={chatEnabled ? setChatsActive : null}
           chatsBackLabel={chatsBackLabel}
+          approvalCount={approvalsEnabled ? approvals.length + notices.length : 0}
+          onShowApprovals={() => setShowApprovals(true)}
           presence={appConfig?.liveCollab && presenceUsers.length > 1
             ? <PresenceBar users={presenceUsers} currentUserId={userInfo?.id} typingUsers={typingUsers} />
             : null}

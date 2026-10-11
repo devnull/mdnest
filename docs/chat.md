@@ -270,8 +270,8 @@ or denies anything by itself.
 
 If the agent is in a chat (its last `mdnest chat wait`), the question shows
 as a card in that chat, under the agent's chat name: "Builder (Claude Code on
-build-box)". Otherwise it shows in the approvals list: a "N waiting" badge in
-the sidebar footer opens it. While an mdnest tab is open, the tab title shows
+build-box)". Otherwise it shows in the approvals list: a "N waiting" badge next
+to the Chats button in the toolbar opens it. While an mdnest tab is open, the tab title shows
 the count, for example `(1) mdnest`, and if you allowed browser notifications
 (the approvals list offers it) each new item raises one.
 
