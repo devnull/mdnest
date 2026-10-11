@@ -76,6 +76,15 @@ All notable changes to mdnest are documented here.
   chat, and that a block never ends its time there: it keeps waiting in the
   background so you can answer it in its terminal.
 
+### Security
+
+- **Go 1.26.9 and golang.org/x/net 0.60.0.** Twelve advisories published
+  after v4.8.4 (GO-2026-6610 to GO-2026-6617 among them) affect the HTTP
+  server code in Go 1.26.6 and x/net 0.58.0, which the backend uses. The
+  backend now builds with Go 1.26.9, and x/net moves to 0.60.0 along with
+  small bumps of x/crypto, x/sys, x/text and x/sync. govulncheck reports
+  nothing the backend calls.
+
 ## v4.8.4: Private chats
 
 A chat can now be limited to the people invited to it, and you pick them
