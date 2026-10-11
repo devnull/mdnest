@@ -191,6 +191,65 @@ run_login_suite() {
   esac
 }
 
+# ── login with no token: the terminal prompt ────────────────────────────────
+# `mdnest login @alias url` with no token asks for it on /dev/tty without
+# echoing, so it never lands in shell history. Driven on a real pty by
+# tests/pty-drive.py, against a closed loopback port: the CLI cannot check the
+# token there, so it saves it with the old "will retry" warning, which is what
+# lets the saved file be inspected with no server at all. The alias prompt and
+# a rejected token need a server and live in tests/cli-login-update.sh.
+run_login_prompt_suite() {
+  echo "── login: token prompt ──"
+  local home out rc tokfile
+
+  # No terminal at all (a script, CI): exactly today's usage + exit 1.
+  home="$(mktemp -d "$SHIM_DIR/home.XXXXXX")"
+  rc=0
+  out="$(HOME="$home" MDNEST_TTY="$SHIM_DIR/no-such-tty" "$REPO_ROOT/mdnest" login @t http://127.0.0.1:1 2>&1 </dev/null)" || rc=$?
+  eq "login prompt: no terminal exits 1" "1" "$rc"
+  case "$out" in *Usage:*) ok "login prompt: no terminal prints usage" ;;
+    *) bad "login prompt: no terminal prints usage" "got [$out]" ;; esac
+  eq "login prompt: no terminal saves nothing" "0" "$(find "$home" -type f | wc -l | tr -d ' ')"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "  (python3 not present: skipping the pty checks)"
+    return 0
+  fi
+
+  # A terminal and a token: prompt shown, token not echoed, token saved.
+  home="$(mktemp -d "$SHIM_DIR/home.XXXXXX")"
+  rc=0
+  out="$(HOME="$home" PTY_PROMPTS="Token (not shown): " PTY_ANSWERS="mdnest_secret123" \
+    python3 "$REPO_ROOT/tests/pty-drive.py" -- "$REPO_ROOT/mdnest" login @t http://127.0.0.1:1 2>&1)" || rc=$?
+  eq "login prompt: exits 0 with a token" "0" "$rc"
+  case "$out" in *"Token (not shown): "*) ok "login prompt: asks for the token" ;;
+    *) bad "login prompt: asks for the token" "got [$out]" ;; esac
+  case "$out" in *"API Tokens"*) ok "login prompt: says where to create one" ;;
+    *) bad "login prompt: says where to create one" "got [$out]" ;; esac
+  case "$out" in *mdnest_secret123*|*PTY-ECHO-STILL-ON*) bad "login prompt: token is not echoed" "got [$out]" ;;
+    *) ok "login prompt: token is not echoed" ;; esac
+  tokfile="$home/.config/mdnest/servers/t"
+  eq "login prompt: token saved" "token=mdnest_secret123" "$(grep '^token=' "$tokfile" 2>/dev/null)"
+  eq "login prompt: url saved" "url=http://127.0.0.1:1" "$(grep '^url=' "$tokfile" 2>/dev/null)"
+
+  # An empty answer saves nothing.
+  home="$(mktemp -d "$SHIM_DIR/home.XXXXXX")"
+  rc=0
+  out="$(HOME="$home" PTY_PROMPTS="Token (not shown): " PTY_ANSWERS="" \
+    python3 "$REPO_ROOT/tests/pty-drive.py" -- "$REPO_ROOT/mdnest" login @t http://127.0.0.1:1 2>&1)" || rc=$?
+  eq "login prompt: empty token exits 1" "1" "$rc"
+  eq "login prompt: empty token saves nothing" "0" "$(find "$home" -type f | wc -l | tr -d ' ')"
+
+  # A token on the command line never prompts, even with a terminal.
+  home="$(mktemp -d "$SHIM_DIR/home.XXXXXX")"
+  rc=0
+  out="$(HOME="$home" PTY_PROMPTS="" python3 "$REPO_ROOT/tests/pty-drive.py" -- \
+    "$REPO_ROOT/mdnest" login @t http://127.0.0.1:1 mdnest_cli 2>&1)" || rc=$?
+  case "$out" in *"Token (not shown)"*) bad "login prompt: a given token is not asked for" "got [$out]" ;;
+    *) ok "login prompt: a given token is not asked for" ;; esac
+  eq "login prompt: given token saved" "token=mdnest_cli" "$(grep '^token=' "$home/.config/mdnest/servers/t" 2>/dev/null)"
+}
+
 # ── unreachable servers must degrade, not kill the script ───────────────────
 # `mdnest servers` printed the table header, then exited with curl's own 28 and
 # nothing else, whenever ANY registered server was unreachable. The cause is a
@@ -557,6 +616,12 @@ run_keepalive_suite() {
   # After chat leave, the agent may stop.
   printf '%s\n' '{"x":"mdnest chat wait notes/c.md --as a"}' '{"x":"mdnest chat leave notes/c.md --as a"}' > "$d/left.jsonl"
   eq "keepalive: chat leave lets the agent stop" "" "$(ka s3 "$d/left.jsonl")"
+  # An agent that tacks `; echo $?` onto its wait: the separator is not part
+  # of the chat path or the name.
+  printf '%s\n' '{"tool_use":{"input":{"command":"mdnest chat wait @srv/notes/team.md --as Viewer; echo \"EXIT=$?\""}}}' > "$d/sep.jsonl"
+  eq "keepalive target: a ; after the name is not part of it" "$(printf '@srv/notes/team.md\tViewer')" "$(MDNEST_LIB=1 bash -c 'source "$1"; chat_keepalive_target "$2"' _ "$REPO_ROOT/mdnest" "$d/sep.jsonl" 2>/dev/null)"
+  printf '%s\n' '{"tool_use":{"input":{"command":"mdnest chat wait @srv/notes/team.md; echo done"}}}' > "$d/sep2.jsonl"
+  eq "keepalive target: a ; after the path is not part of it" "$(printf '@srv/notes/team.md\t')" "$(MDNEST_LIB=1 bash -c 'source "$1"; chat_keepalive_target "$2"' _ "$REPO_ROOT/mdnest" "$d/sep2.jsonl" 2>/dev/null)"
   # Never in a chat, no transcript, garbage, or switched off: say nothing.
   printf '%s\n' '{"x":"ls -la"}' > "$d/none.jsonl"
   eq "keepalive: no chat, no block" "" "$(ka s4 "$d/none.jsonl")"
@@ -575,6 +640,79 @@ run_keepalive_suite() {
   # Once the stops are spread out again, it blocks again.
   eq "keepalive: blocks again once the window has passed" '{"dec' \
      "$(printf '{"session_id":"loop","transcript_path":"%s"}' "$d/claude.jsonl" | TMPDIR="$d" MDNEST_KEEPALIVE_WINDOW=0 "$REPO_ROOT/mdnest" chat keepalive | cut -c1-5)"
+  rm -rf "$d"
+}
+
+run_approval_suite() {
+  echo "── agent approvals (pure helpers) ──"
+  local d; d=$(mktemp -d)
+  # Policy file: read as data, quotes stripped, comments and CRLF ignored,
+  # and never sourced (a line that looks like a command is just an unknown key).
+  printf '%s\r\n' '# policy' 'SERVER=@box' 'MACHINE_LABEL="build box"' "TOOLS='Bash, Write'" \
+    'NEVER_REMOTE= sudo , rm -rf ' 'MAX_WAIT=300' "touch $d/ran" > "$d/approvals.conf"
+  APPROVALS_CONF="$d/approvals.conf" approval_policy_load; local rc=$?
+  eq "policy: loads" "0" "$rc"
+  eq "policy: SERVER without @" "box" "$APPROVAL_SERVER"
+  eq "policy: quoted label" "build box" "$APPROVAL_MACHINE"
+  eq "policy: TOOLS" "Bash, Write" "$APPROVAL_TOOLS"
+  eq "policy: MAX_WAIT" "300" "$APPROVAL_MAX_WAIT"
+  eq "policy: QUESTIONS defaults to yes" "yes" "$APPROVAL_QUESTIONS"
+  # approval_context: the chat and the agent's name from the transcript, the
+  # same rule chat keepalive uses; flags win.
+  printf '%s\n' '{"x":"mdnest chat wait @box/ns/Chats/room.md --as builder --timeout 120"}' > "$d/t.jsonl"
+  APPROVAL_SERVER=box APPROVAL_MACHINE=mini approval_context "{\"transcript_path\":\"$d/t.jsonl\"}" "" ""
+  eq "context: chat from the transcript" "ns/Chats/room.md" "$APPROVAL_CHAT"
+  eq "context: name from the transcript" "builder" "$APPROVAL_AS"
+  eq "context: machine label" "mini" "$APPROVAL_MACHINE_NAME"
+  APPROVAL_SERVER=box approval_context "{\"transcript_path\":\"$d/t.jsonl\"}" "@box/ns/other.md" "Reviewer"
+  eq "context: flags win" "ns/other.md Reviewer" "$APPROVAL_CHAT $APPROVAL_AS"
+  if [ -e "$d/ran" ]; then bad "policy: the file is never run" "a line in it was executed"; else ok "policy: the file is never run"; fi
+  APPROVALS_CONF="$d/missing.conf" approval_policy_load; rc=$?
+  eq "policy: no file means forward nothing" "1" "$rc"
+  printf 'MACHINE_LABEL=x\n' > "$d/noserver.conf"
+  APPROVALS_CONF="$d/noserver.conf" approval_policy_load; rc=$?
+  eq "policy: no SERVER means forward nothing" "1" "$rc"
+  # Tools: exact names, * for any, empty tool never.
+  approval_tool_allowed Bash "Bash, Write"; eq "tools: Bash allowed" "0" "$?"
+  approval_tool_allowed Write "Bash, Write"; eq "tools: Write allowed (spaces trimmed)" "0" "$?"
+  approval_tool_allowed bash "Bash"; eq "tools: names are case-sensitive" "1" "$?"
+  approval_tool_allowed WebFetch "Bash"; eq "tools: others stay local" "1" "$?"
+  approval_tool_allowed WebFetch "*"; eq "tools: * allows any" "0" "$?"
+  approval_tool_allowed "" "*"; eq "tools: no tool name stays local" "1" "$?"
+  # NEVER_REMOTE: substring, case-insensitive, over the whole raw input.
+  approval_never_remote '{"command":"SUDO reboot"}' "sudo"; eq "never: case-insensitive" "0" "$?"
+  approval_never_remote '{"command":"cat ~\/.ssh\/key"}' "~/.ssh"; eq "never: matches behind JSON-escaped slashes" "0" "$?"
+  approval_never_remote '{"command":"ls","description":"uses sudo later"}' "sudo"; eq "never: a match in the description also stays local" "0" "$?"
+  approval_never_remote '{"command":"ls -la"}' "sudo, rm -rf"; eq "never: no match goes remote" "1" "$?"
+  approval_never_remote '{"command":"ls"}' " , "; eq "never: empty patterns match nothing" "1" "$?"
+  # Chat refs: only a chat on the approval SERVER is sent.
+  APPROVAL_SERVER=box
+  eq "chat: @alias/ns/path" "ns/Chats/a.md" "$(approval_chat_ref '@box/ns/Chats/a.md')"
+  eq "chat: quoted, as in a transcript" "ns/Chats/my room.md" "$(approval_chat_ref "'@box/ns/Chats/my room.md'")"
+  eq "chat: mdnest:// form" "ns/a.md" "$(approval_chat_ref 'mdnest://@box/ns/a.md')"
+  eq "chat: another server is dropped" "" "$(approval_chat_ref '@other/ns/a.md')"
+  eq "chat: not a note is dropped" "" "$(approval_chat_ref '@box/ns')"
+  eq "approval_field: reads a plain field" "s-1" "$(approval_field session_id '{"a":1, "session_id" : "s-1","x":"y"}')"
+  rm -rf "$d"
+}
+
+run_keepalive_no_policy_suite() {
+  echo "── chat keepalive without an approvals policy (unchanged output) ──"
+  # Agent approvals hooked a "stopped" notice into keepalive's give-up path.
+  # Without ~/.config/mdnest/approvals.conf that must change nothing: the
+  # expected text below is what the CLI printed before approvals existed
+  # (captured from develop at 4.8.5-dev), for three blocked stops and the
+  # fourth one it lets through. Nothing may be written under HOME either.
+  local d out i; d=$(mktemp -d)
+  mkdir -p "$d/home" "$d/tmp"
+  printf '%s\n' '{"x":"mdnest chat wait @srv/notes/team.md --as codxu --timeout 120"}' > "$d/t.jsonl"
+  local block='{"decision":"block","reason":"You are still in the mdnest chat @srv/notes/team.md. Do not stop: run `mdnest chat wait @srv/notes/team.md --as codxu --timeout 120` now and keep the loop going (wait, reply if it is for you, wait again). Only when a person in the chat tells you to leave, run the chat leave command with the same chat and --as, then stop."}'
+  out=""
+  for i in 1 2 3 4; do
+    out="$out$(printf '{"session_id":"pin","transcript_path":"%s"}' "$d/t.jsonl" | HOME="$d/home" TMPDIR="$d/tmp" "$REPO_ROOT/mdnest" chat keepalive 2>&1; printf '|%s;' "$?")"
+  done
+  eq "keepalive, no policy: byte-for-byte the output it had before approvals" "$block"$'\n'"|0;$block"$'\n'"|0;$block"$'\n'"|0;|0;" "$out"
+  eq "keepalive, no policy: writes nothing under HOME" "" "$(ls -A "$d/home")"
   rm -rf "$d"
 }
 
@@ -712,10 +850,13 @@ run_transfer_suite "no python3/jq"
 # Argument handling is pure bash and parser-independent, so it runs once. It
 # needs SHIM_DIR for its throwaway HOMEs, hence its place at the end.
 run_login_suite
+run_login_prompt_suite
 run_unreachable_suite
 run_install_source_suite
 run_version_suite
 run_keepalive_suite
+run_keepalive_no_policy_suite
+run_approval_suite
 run_errexit_lint
 
 echo

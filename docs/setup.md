@@ -9,7 +9,13 @@ This guide covers installing, configuring, and running mdnest.
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) (version 20.10 or later)
-- [Docker Compose](https://docs.docker.com/compose/install/) (v2, included with Docker Desktop)
+- [Docker Compose](https://docs.docker.com/compose/install/) (v2, included with Docker Desktop).
+  The guided setup needs **Compose 2.17 or newer** from 4.8.5 on: it builds the
+  frontend image with a second build context (`additional_contexts`) so the
+  image can serve the `mdnest` CLI at `/cli/mdnest`. `setup.sh` checks the
+  version and stops with a message naming it if Compose is older. Check yours
+  with `docker compose version`. The plain Compose install only pulls images
+  and has no such requirement.
 - Git — only for the [guided setup](#guided-setup); the plain Compose install needs none
 
 There are two ways to install. They run the same images and give you the same
@@ -187,6 +193,7 @@ On first run, `setup.sh` copies `mdnest.conf.sample` to `mdnest.conf` and exits,
 | `ENABLE_TASK_BOARD` *(v4.0.0+)* | `false` | Enable the kanban task board over note checkboxes, including task relations, filters and the cross-workspace "All workspaces" scope. Routes are not registered and the UI chunk is not loaded when off. |
 | `ENABLE_MARP` *(v4.1.0+)* | `false` | Render a note whose frontmatter declares `marp: true` as a slide deck in the Preview pane. The Marp engine chunk only downloads for a deck. |
 | `ENABLE_MARP_THEMES` *(v4.2.0+)* | `false` | Requires `ENABLE_MARP`. Adds a shared theme catalog decks reference by name (`theme: <name>`) plus a superadmin **Marp Themes** admin tab. Themes live in the reserved `.marp-themes` namespace; `setup.sh` backs it with the `mdnest-marp-themes` named volume so a rebuild doesn't wipe them, and the Helm chart already mounts all of `/data/notes`. |
+| `ENABLE_AGENT_APPROVALS` *(v4.8.5+, experimental)* | `false` | Answer an agent's (Claude Code or Codex) permission prompt from mdnest: the question shows as a card, you press Allow or Deny in the browser, and the agent continues. Each machine also has to opt in, see `docs/chat.md`. Decisions are accepted only from a browser login. Requests live in memory and are not available on `MDNEST_ROLE=app`. Read the added risk in `docs/security.md` before turning it on. |
 | `ENABLE_EXCALIDRAW` *(v4.2.0+)* | `false` | Open `.excalidraw.md` notes on an Excalidraw canvas and allow read-only drawing embeds in any note. The (large) editor bundle is code-split and only loads when a drawing is opened. See `docs/excalidraw.md`. |
 | `EXCALIDRAW_LIBRARIES` *(v4.2.0+)* | *(none)* | Requires `ENABLE_EXCALIDRAW`. Comma-separated URLs to `.excalidrawlib` files, preloaded into every drawing so an organisation can ship a shared shape set. Fetched by the **browser**, not the backend, so the URLs must be reachable by clients (and CORS-enabled). |
 | `OIDC_GROUPS_CLAIM` *(v4.2.0+)* | *(none)* | Requires `USER_PROVIDER=sso`. Name of the ID-token claim holding the user's IdP group IDs (e.g. `groups` on Entra ID). Enables OIDC-group membership in access Groups. Empty disables OIDC-group resolution entirely. **Membership is snapshotted at login** — see `docs/security.md`. |

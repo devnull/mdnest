@@ -4,6 +4,29 @@ The `mdnest` CLI lets you read, write, search, and organize notes from any termi
 
 ## Install
 
+### From your own server (4.8.5+)
+
+Every mdnest server serves the exact CLI it was built with, at `/cli/mdnest`,
+with no login needed. Its installer gets the CLI from that server:
+
+```bash
+curl -fsSL https://notes.example.com/cli/install.sh | bash -s -- https://notes.example.com
+```
+
+Settings, then the CLI tab, shows this command with your server's address
+filled in, next to separate commands to update an installed CLI and to connect
+it to the server. Use it when the server runs a develop build, an older release or a
+fork: the CLI you get matches the server, which the GitHub copy may not. If the
+server cannot serve the CLI (an older server, or a proxy in the way), the
+installer falls back to the latest release from GitHub and says so.
+
+It only installs. It then prints `mdnest login https://notes.example.com`,
+which you run to connect the CLI to the server; it asks for a token at the
+terminal (see [Login](#login)). Installing and connecting are separate steps
+because most people already have the CLI connected, or are only updating it.
+
+### From GitHub
+
 One command, works on macOS and Linux:
 
 ```bash
@@ -45,6 +68,28 @@ MDNEST_BRANCH=develop mdnest update --force
 ## Login
 
 Every server you log into gets a short **alias** (`@work`, `@home`, etc). The alias appears in your paths (`@work/engineering/README.md`) and in copy-path URIs from the web UI.
+
+### Paste the token at a prompt
+
+Leave the token off and, in a terminal, the CLI asks for it:
+
+```bash
+mdnest login https://work-server:3236
+# Create a token in the web UI at https://work-server:3236
+# (Settings, then the API Tokens tab), copy it, and paste it here.
+# Token (not shown):
+```
+
+What you paste is not shown and does not go into your shell history. The CLI
+checks the token with the server before saving it, and saves nothing if the
+server refuses it or you press Enter without one. If the server has no
+`SERVER_ALIAS`, it also asks what to call the server. `@alias` works here too:
+`mdnest login @work https://work-server:3236`.
+
+The prompt reads from the terminal itself, not from standard input, so it works
+under `curl ... | bash`. With no terminal at all (a script or CI job), login
+without a token prints the usage and exits 1, as before; pass the token on the
+command line there.
 
 ### Pick the alias yourself
 
@@ -293,6 +338,47 @@ minutes (set it again during long work); the next post, or going back to
 to end its turn while its last chat command was a wait is sent back to
 waiting, until it runs `chat leave`. Setup is in [chat.md](chat.md).
 
+### Agent approvals *(experimental; server `ENABLE_AGENT_APPROVALS=true`)*
+
+Lets you answer an agent's permission prompts and questions from mdnest, and
+tells you when an agent is stuck or stopped. These commands are meant to be
+run by the agent as hooks, not by hand.
+
+```bash
+mdnest approval hook-config claude-code > approvals.json   # print the hook settings
+claude --settings approvals.json                             # use them for one session
+mdnest approval hook-config codex                            # the same for Codex
+```
+
+`approval request [--agent claude-code|codex] [--chat @alias/ns/path] [--as NAME] [--timeout N]`
+is the `PermissionRequest` hook. It reads the hook input on stdin, sends it
+unchanged to the server named in `~/.config/mdnest/approvals.conf`, waits for a
+decision (540 seconds by default, never longer than `MAX_WAIT`), and prints
+the server's answer exactly as received. On any failure (no policy file, a
+tool not in `TOOLS`, a `NEVER_REMOTE` match, a timeout, an expired request,
+an unreachable server, a CLI the server finds too old) it prints nothing and
+exits 0, so the agent's terminal prompt answers. It finds the chat the agent
+is in, and the agent's name there, the same way `chat keepalive` does (the
+last `mdnest chat wait ... --as NAME` in the session), or takes `--chat` and
+`--as`. An AskUserQuestion goes through whatever `TOOLS` says, unless the
+policy says `QUESTIONS=no`.
+
+`approval done` is the `PostToolUse` and `Stop` hook. It closes the session's
+open requests that were answered in the terminal and clears its notices, and
+only calls the server while one of them is open.
+
+`approval notify [--agent claude-code|codex] [--chat @alias/ns/path] [--as NAME]`
+is the `Notification` hook. It posts a notice (the agent is waiting in its
+terminal, or idle) to the approvals list and one neutral line in the agent's
+chat. `chat keepalive` calls it with `--type stopped` when it lets a chat
+agent stop. One request, a 5 second limit, nothing printed.
+
+Nothing keeps running on the machine between hooks: only `approval request`
+waits, and only while its own question is open.
+
+Needs only bash and curl. The policy file and the agent setup are in
+[chat.md](chat.md#agent-approvals-experimental-off-by-default).
+
 ## Server management
 
 ```bash
@@ -342,8 +428,11 @@ line telling you so, wherever you are already looking at versions
 
 ```
   Your mdnest CLI is v4.3.1; @work is running v4.3.2.
-  Update it with:  mdnest update
+  Update it with:  mdnest update --server @work
 ```
+
+It suggests `--server`, which installs the CLI that server was built with
+(see [Updating](#updating)).
 
 This exists because nothing pushes CLI updates to you. `mdnest update` is
 pull-only, and before v4.3.2 the *only* check was the major-version one — so a
@@ -371,7 +460,20 @@ version your server is running, so you have something concrete to compare
 mdnest update                 # self-update from main
 mdnest update --force         # re-download even if the version matches
 MDNEST_BRANCH=develop mdnest update --force   # track an unreleased build
+mdnest update --server @work  # the CLI the @work server was built with (4.8.5+)
+mdnest update --server https://notes.example.com   # same, by address
 ```
+
+A CLI older than 4.8.5 does not know `--server`: it ignores the option, updates
+from GitHub, and may report "up to date" while the server runs a newer
+version. Run the server's install command once (see
+[From your own server](#from-your-own-server-485)) to get past that.
+
+`--server` downloads only from that server's `/cli/mdnest`; it never falls
+back to GitHub, because the point is to match the server. Like every update it
+downloads to a temp file and checks that it really is the CLI before replacing
+anything, so an error page or a proxy login page leaves your installed CLI as
+it was.
 
 Or reinstall from scratch:
 

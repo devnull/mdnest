@@ -4,6 +4,94 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.5: Approve agents from mdnest, and get the CLI from your server
+
+You can now answer a coding agent's permission prompt from mdnest, in the
+browser or on your phone (experimental, off by default). Every server serves
+the CLI it was built with, and the Settings CLI tab has separate Install,
+Update and Connect commands. `mdnest login` can ask for the token instead of
+taking it on the command line. The backend moves to Go 1.26.9 for twelve
+security advisories. The guided setup now needs Docker Compose 2.17 or newer.
+
+### Added (experimental)
+
+- **Answer an agent's permission prompt from mdnest.** When Claude Code or
+  Codex stops to ask before running a command, the question can now show up
+  in mdnest as a card, in the agent's chat or in a new approvals list, and
+  you press Allow, Deny, or Deny with a reason from the browser or your
+  phone. The agent's own terminal prompt still shows at the same time, and
+  whichever answers first wins; if anything fails, the terminal answers as
+  before. Off by default and opted into three times: the server
+  (`ENABLE_AGENT_APPROVALS=true`), each machine (`~/.config/mdnest/approvals.conf`
+  and `mdnest approval hook-config`), and each agent session. Decisions count
+  only from a browser login, never from an API token, and only the account the
+  agent runs as can see the command. The card also answers an agent's
+  questions (options, several at once, or your own answer), shows file writes
+  and edits readably, and offers "Allow for this session" when Claude Code
+  suggests it. Notices in the same list say when an agent is waiting in its
+  terminal or has stopped. Cards and notices carry the agent's chat name.
+  Experimental: to be reviewed on 2026-11-15. Setup, and what to expect in
+  auto mode, in `docs/chat.md`; the added risk in `docs/security.md`.
+
+### Added
+
+- **Get the CLI from your own server.** Every server now serves the exact
+  `mdnest` CLI it was built with at `/cli/mdnest`, plus an installer at
+  `/cli/install.sh`, with no login needed. The installer gets the CLI from
+  that server (falling back to GitHub's latest release only if the server
+  cannot serve it) and prints the command to connect it. Settings, CLI tab,
+  now has three separate commands for this server, Install, Update and
+  Connect, since most people need only one of them. `mdnest update --server @work` (or a
+  URL) installs the CLI that server was built with, and the "your CLI is
+  behind" notice now suggests it. A plain `mdnest update` still comes from
+  GitHub `main`. Like every update, it checks the download really is the CLI
+  before replacing anything. **The guided setup now needs Docker Compose 2.17
+  or newer**, because the frontend image takes the CLI from a second build
+  context; `setup.sh` stops with a message naming the version if Compose is
+  older (`docker compose version` shows yours). The plain Compose install only
+  pulls images and is unaffected.
+- **Log in without pasting the token into the command.** `mdnest login
+  https://server` (or `mdnest login @alias https://server`) with no token now
+  asks for it at the terminal, says where to create one, and does not show
+  what you paste, so it stays out of shell history. The token is checked with
+  the server before it is saved. If the server has no `SERVER_ALIAS`, it asks
+  what to call the server instead of failing. With no terminal (a script or
+  CI) login behaves as before, and a token on the command line still works.
+  The Settings CLI tab has a "Create a token and copy it" button for this
+  prompt, so there is no need to switch tabs.
+
+### Fixed
+
+- **Chat keepalive reads an agent's name correctly when it adds `; echo $?`
+  to its wait.** The name and chat path stopped at a space or a quote but not
+  at `;`, so an agent named Viewer showed as "Viewer;". They now end at any
+  shell separator.
+- **A half-typed chat message is no longer lost when you open another
+  chat.** Each chat keeps its own draft, in the browser, so switching chats
+  and coming back (or reloading the page) puts back what you were typing.
+  It goes once it is sent.
+- **An agent refused by a private chat is told why.** An agent whose mdnest
+  CLI is signed in to an account that is not a member got a bare "access
+  denied" on every command, so neither it nor you could tell what was wrong.
+  It now reads "this chat is private and your account (name) is not a
+  member", and the Connect an agent popup says so up front for a private
+  chat. Someone with no access to the note still gets the plain answer.
+- **Agents no longer leave the chat after a blocked command.** In Claude
+  Code's auto mode, an agent that posted a blocked command to the chat for
+  someone to run had those posts refused too, and then stopped listening.
+  The agent prompt now says never to route a blocked command through the
+  chat, and that a block never ends its time there: it keeps waiting in the
+  background so you can answer it in its terminal.
+
+### Security
+
+- **Go 1.26.9 and golang.org/x/net 0.60.0.** Twelve advisories published
+  after v4.8.4 (GO-2026-6610 to GO-2026-6617 among them) affect the HTTP
+  server code in Go 1.26.6 and x/net 0.58.0, which the backend uses. The
+  backend now builds with Go 1.26.9, and x/net moves to 0.60.0 along with
+  small bumps of x/crypto, x/sys, x/text and x/sync. govulncheck reports
+  nothing the backend calls.
+
 ## v4.8.4: Private chats
 
 A chat can now be limited to the people invited to it, and you pick them
