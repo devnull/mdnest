@@ -18,6 +18,25 @@ fi
 
 echo "Reading $CONF..."
 
+# The compose file below gives the frontend build a second, named context
+# (`additional_contexts`, so the image can serve the repo-root CLI). Compose
+# learned that key in 2.17; an older one fails every command with a schema
+# error that names neither the key's purpose nor the version. Say it plainly
+# instead. Skipped when docker is absent or the version can't be read: this
+# script also runs on machines that only generate the files.
+compose_ver=$(docker compose version --short 2>/dev/null) || compose_ver=""
+compose_ver="${compose_ver#v}"
+if [ -n "$compose_ver" ]; then
+  cv_major="${compose_ver%%.*}"; cv_rest="${compose_ver#*.}"; cv_minor="${cv_rest%%.*}"
+  cv_major="${cv_major//[!0-9]/}"; cv_minor="${cv_minor//[!0-9]/}"
+  if [ -n "$cv_major" ] && [ -n "$cv_minor" ] &&
+     { [ "$cv_major" -lt 2 ] || { [ "$cv_major" -eq 2 ] && [ "$cv_minor" -lt 17 ]; }; }; then
+    echo "Error: mdnest needs Docker Compose 2.17 or newer; this machine has ${compose_ver}." >&2
+    echo "Update Docker (or the docker-compose-plugin package), then run this again." >&2
+    exit 1
+  fi
+fi
+
 # Short git commit of the current checkout. Baked into the backend binary at
 # build time (via docker-compose build arg → Dockerfile ldflags) so /api/config
 # can report exactly which build is running. Falls back to "unknown" outside a
@@ -45,6 +64,9 @@ COMPOSE_PROJECT_NAME=""
 SSO_DISABLE_PASSWORD_LOGIN=""
 SSO_AUTOPROVISION_USERS=""
 OIDC_GROUPS_CLAIM=""
+# Agent approvals let a browser answer an agent's permission prompt, so an
+# exported shell variable must not turn them on either.
+ENABLE_AGENT_APPROVALS=""
 # Folder download / transfer limits: only mdnest.conf sets them.
 DOWNLOAD_MAX_FILES=""
 DOWNLOAD_MAX_MB=""
@@ -84,6 +106,7 @@ while IFS= read -r line; do
     ENABLE_MARP_THEMES) ENABLE_MARP_THEMES="$value" ;;
     ENABLE_EXCALIDRAW) ENABLE_EXCALIDRAW="$value" ;;
     ENABLE_CHAT) ENABLE_CHAT="$value" ;;
+    ENABLE_AGENT_APPROVALS) ENABLE_AGENT_APPROVALS="$value" ;;
     DEFAULT_THEME) DEFAULT_THEME="$value" ;;
     EXCALIDRAW_LIBRARIES) EXCALIDRAW_LIBRARIES="$value" ;;
     REQUIRE_2FA) REQUIRE_2FA="$value" ;;
@@ -223,6 +246,15 @@ if [ "$USER_PROVIDER" = "sso" ]; then
   esac
 fi
 
+case "${ENABLE_AGENT_APPROVALS:-false}" in
+  true)  echo "Agent approvals: on (experimental). Agents on opted-in machines can ask for approval here." ;;
+  false) ;;
+  *)
+    echo "Error: ENABLE_AGENT_APPROVALS must be true or false (got '${ENABLE_AGENT_APPROVALS}')."
+    exit 1
+    ;;
+esac
+
 if [ ${#MOUNT_NAMES[@]} -eq 0 ]; then
   echo "Error: No MOUNT_ entries found in $CONF."
   echo "Add at least one line like: MOUNT_myrepo=/path/to/directory"
@@ -290,6 +322,7 @@ ENABLE_MARP=${ENABLE_MARP:-false}
 ENABLE_MARP_THEMES=${ENABLE_MARP_THEMES:-false}
 ENABLE_EXCALIDRAW=${ENABLE_EXCALIDRAW:-false}
 ENABLE_CHAT=${ENABLE_CHAT:-true}
+ENABLE_AGENT_APPROVALS=${ENABLE_AGENT_APPROVALS:-false}
 EXCALIDRAW_LIBRARIES=${EXCALIDRAW_LIBRARIES:-}
 DEFAULT_THEME=${DEFAULT_THEME:-auto}
 REQUIRE_2FA=${REQUIRE_2FA:-false}
@@ -605,7 +638,11 @@ ${BACKEND_VOLUMES}      - mdnest-secrets:/data/secrets
 ${BACKEND_EXTRA_ENV}    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # The repo-root mdnest CLI, served at /cli/mdnest (needs Compose 2.17+).
+      additional_contexts:
+        cli: .
 ${FRONTEND_PORT_LINE}
     depends_on:
       - backend

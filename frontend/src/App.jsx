@@ -53,6 +53,9 @@ import {
   localLinks, CLIPBOARD_MAX_BYTES,
 } from './transfer.js';
 import ReleaseNotesModal from './components/ReleaseNotesModal.jsx';
+import ApprovalsPanel from './components/ApprovalsPanel.jsx';
+import useApprovals from './useApprovals.js';
+import { titleWithCount } from './approvals.js';
 import CollabClient from './collab.js';
 import { normalizeBoard } from './stickies.js';
 import { isMarpDoc, effectiveEditorMode } from './marp.js';
@@ -506,6 +509,7 @@ function App() {
   // older than the running server, refresh the tab"). dismissedReleaseVer
   // hides the badge after the user has acknowledged a specific version.
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+  const [showApprovals, setShowApprovals] = useState(false);
   const [dismissedReleaseVer, setDismissedReleaseVer] = useState(() => localStorage.getItem('mdnest_dismissed_release_version') || '');
   const [wsStatus, setWsStatus] = useState('disconnected'); // 'connected' | 'connecting' | 'disconnected'
   const etagRef = useRef(null);
@@ -714,10 +718,14 @@ function App() {
   // (different servers) are visually distinguishable. Falls back to the
   // plain "mdnest" title when no SERVER_ALIAS is configured on the
   // server — same as the static <title> in index.html.
+  // Agent approvals (experimental): polled on every view while the server
+  // has them on, so the waiting count can sit in the tab title.
+  const approvalsEnabled = !!appConfig?.agentApprovals && authenticated;
+  const { approvals, notices, refresh: refreshApprovals, dismiss: dismissNotice, notifyState, enableNotifications } = useApprovals(approvalsEnabled);
   useEffect(() => {
     const alias = appConfig?.serverAlias;
-    document.title = alias ? `mdnest (${alias})` : 'mdnest';
-  }, [appConfig?.serverAlias]);
+    document.title = titleWithCount(alias ? `mdnest (${alias})` : 'mdnest', approvals.length + notices.length);
+  }, [appConfig?.serverAlias, approvals.length, notices.length]);
 
   // Version check: poll /api/config every 60s, compare server version vs build version.
   // Same poll keeps `appConfig.latestRelease` fresh — without this update,
@@ -2263,6 +2271,8 @@ function App() {
           onSetBoardActive={taskBoardEnabled && selectedNs ? setBoardActive : null}
           onSetChatsActive={chatEnabled ? setChatsActive : null}
           chatsBackLabel={chatsBackLabel}
+          approvalCount={approvalsEnabled ? approvals.length + notices.length : 0}
+          onShowApprovals={() => setShowApprovals(true)}
           presence={appConfig?.liveCollab && presenceUsers.length > 1
             ? <PresenceBar users={presenceUsers} currentUserId={userInfo?.id} typingUsers={typingUsers} />
             : null}
@@ -2686,6 +2696,17 @@ function App() {
         excalidraw={excalidrawEnabled}
         chat={chatEnabled}
       />
+      {showApprovals && approvalsEnabled && (
+        <ApprovalsPanel
+          approvals={approvals}
+          notices={notices}
+          onDismiss={dismissNotice}
+          onClose={() => setShowApprovals(false)}
+          onRefresh={refreshApprovals}
+          notifyState={notifyState}
+          onEnableNotifications={enableNotifications}
+        />
+      )}
       {showReleaseNotes && appConfig?.latestRelease && (
         <ReleaseNotesModal
           release={appConfig.latestRelease}

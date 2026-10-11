@@ -257,73 +257,119 @@ function TokensTab() {
   );
 }
 
+// Copies text without the async Clipboard API when that is unavailable (a LAN
+// install over plain http). Returns whether the copy went through.
+function copyText(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+// Creates an API token for the CLI and copies it, so setting up the CLI never
+// means switching to the API Tokens tab and back. The token is shown once, as
+// in that tab, in case the copy was blocked.
+function CliTokenButton() {
+  const [token, setToken] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const create = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const data = await createToken(`CLI ${day}`);
+      setToken(data.token);
+      setCopied(copyText(data.token));
+    } catch (e) {
+      setError(e.message || 'Could not create a token');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (token) {
+    return (
+      <div className="token-created cli-token-created">
+        <div className="token-created-label">
+          {copied
+            ? 'Token created and copied. Paste it when the terminal asks for it. It will not be shown again:'
+            : 'Token created. Copy it now, it will not be shown again:'}
+        </div>
+        <div className="token-created-value">
+          <code>{token}</code>
+          <button onClick={() => setCopied(copyText(token))}>{copied ? 'Copied!' : 'Copy'}</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="cli-token-row">
+      <button className="modal-btn-primary" onClick={create} disabled={busy}>
+        {busy ? 'Creating...' : 'Create a token and copy it'}
+      </button>
+      {error && <span className="cli-token-error">{error}</span>}
+    </div>
+  );
+}
+
+// Three separate jobs, because most people arriving here need only one of
+// them: install the CLI, update one that is already installed, or connect an
+// installed CLI to this server (often as one more server next to others).
 function CliTab({ serverVersion }) {
   const serverUrl = getServerUrl();
   return (
     <div className="settings-content">
       <h4 className="settings-section-title">mdnest CLI</h4>
       <p className="settings-description">
-        Access your notes from any terminal. Read, write, search, and organize notes without leaving the command line.
+        Read, write and search your notes from a terminal.
+        {serverVersion && <> This server runs <code>v{serverVersion}</code>.</>}
       </p>
 
-      <div className="settings-info-box">
-        <div className="settings-info-label">Your server</div>
-        <code>{serverUrl}</code>
-      </div>
-
-      <div className="settings-steps">
-        <div className="settings-step">
-          <span className="step-num">1</span>
-          <span>Install the CLI (one command):</span>
-        </div>
-      </div>
-      <CodeBlock code="curl -fsSL https://mdnest.dev/install.sh | bash" />
-
-      <div className="settings-steps">
-        <div className="settings-step">
-          <span className="step-num">2</span>
-          <span>Create an API token in the <strong>API Tokens</strong> tab, then login:</span>
-        </div>
-      </div>
-      <CodeBlock code={`mdnest login ${serverUrl} mdnest_yourtoken`} />
-
-      <div className="settings-steps">
-        <div className="settings-step">
-          <span className="step-num">3</span>
-          <span>Start using it:</span>
-        </div>
-      </div>
-      <CodeBlock code={`mdnest list                              # list namespaces
-mdnest list notes                        # list files in the "notes" namespace
-mdnest read notes/path/to/note.md        # read a note
-mdnest search notes "query"              # search
-mdnest write notes/path.md "text"        # write
-echo "text" | mdnest append notes/log.md -        # pipe`} />
-
-      <h4 className="settings-section-title">Keeping it up to date</h4>
+      <h4 className="settings-section-title">Install</h4>
       <p className="settings-description">
-        The CLI does <strong>not</strong> update itself, and nothing pushes new versions to you —
-        it is a script on your machine. If it starts behaving oddly, update it first:
+        Not installed yet? This installs the CLI version this server runs.
       </p>
-      <CodeBlock code={`mdnest update      # self-update from GitHub
-mdnest version     # check what you are running`} />
-      <p className="settings-description">
-        {serverVersion
-          ? <>This server runs <code>v{serverVersion}</code>. If <code>mdnest version</code> reports
-            anything older, update — the CLI and the server ship together at the same version.</>
-          : <>Compare <code>mdnest version</code> against this server's version, shown in the sidebar footer.</>}
-        {' '}From v4.3.2 the CLI tells you itself, in <code>mdnest servers</code> and at login,
-        whenever it is behind the server it is talking to.
-      </p>
+      <CodeBlock code={`curl -fsSL ${serverUrl}/cli/install.sh | bash -s -- ${serverUrl}`} />
 
-      <h4 className="settings-section-title">Multi-Server</h4>
+      <h4 className="settings-section-title">Update</h4>
       <p className="settings-description">
-        Manage multiple mdnest servers with @alias paths:
+        Already installed? The CLI never updates itself. This gets the version this server
+        runs, where a plain update gets the latest release from GitHub. A CLI older than 4.8.5
+        does not know <code>--server</code> and quietly updates from GitHub instead: run the
+        Install command above once.
       </p>
-      <CodeBlock code={`mdnest login @work ${serverUrl} mdnest_yourtoken
-mdnest login @personal https://home:3236 mdnest_yourtoken
-mdnest read @work/notes/path.md
-mdnest servers                           # list all servers`} />
+      <CodeBlock code={`mdnest update --server ${serverUrl}`} />
+
+      <h4 className="settings-section-title">Connect to this server</h4>
+      <p className="settings-description">
+        Run this, then paste a token when it asks. Servers you are already connected to stay
+        connected; this adds one more. To choose its name in your paths, put one like{' '}
+        <code>@work</code> before the address.
+      </p>
+      <CodeBlock code={`mdnest login ${serverUrl}`} />
+      <CliTokenButton />
+
+      <h4 className="settings-section-title">Use it</h4>
+      <CodeBlock code={`mdnest servers
+mdnest list
+mdnest read notes/todo.md
+mdnest search notes "query"
+echo "text" | mdnest append notes/log.md -`} />
+      <p className="settings-description">
+        <code>mdnest help</code> lists every command.
+      </p>
     </div>
   );
 }

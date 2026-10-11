@@ -171,6 +171,76 @@ The per-user sticky board is the one surface whose content deliberately never le
 - **Bounded.** 200 cards per board, 4 KB per card, 256 KB per board, and a colour enum — the endpoint is writable by any authenticated user, so without those caps it is a per-user blob store anyone can fill. The same reasoning gave preferences a key allowlist.
 - **Not backed up.** Stated here because it is a security-relevant tradeoff, not just a UX one: a sticky has no git history and no off-server copy. It survives `mdnest-server rebuild` (the secrets volume is declared, not part of the image layer) but not the loss of that volume.
 
+### Agent approvals *(experimental, off by default)*
+
+`ENABLE_AGENT_APPROVALS` lets a person answer an agent's permission prompt
+from mdnest. It adds a real risk, and that is why it is off by default on the
+server, needs a policy file on each machine, and can be turned on per agent
+session.
+
+**The added risk.** Without approvals, someone who gets into an mdnest
+account, or finds a script-injection bug in a note, can read and change
+notes. With approvals, the same access can press Allow and run commands on
+every machine that opted in for that account. The rules below limit this but
+cannot remove it, so login protection (2FA, SSO) and the rendered-content
+sanitising (Layer 5) matter more once it is on.
+
+The rules:
+
+- **A decision counts only from a browser login, never from an API token.**
+  The agent runs on its owner's API token, so if a token could decide, the
+  agent could approve its own request with curl. The auth middleware records
+  how each request was authenticated, in both auth modes, and
+  `/decide` refuses a token with `403`. A test drives this through the real
+  middleware and fails if the check is removed.
+- **Only the owner account** can see a request's command or decide it. Other
+  accounts, superadmins included, get `404`.
+- **Typed text never approves anything.** A "yes" in a chat is a message.
+- **The command shown is the one that runs.** It is taken from the hook's
+  `tool_input`, not from the model's description. The hook input is parsed
+  with exact key names, and a duplicate or case-variant key is refused, so the
+  server cannot read a different command than the agent. Argument lists are
+  shell-quoted, and every character outside printable text (control and
+  format characters, right-to-left overrides, zero-width characters, unusual
+  spaces) is shown as an escape. The card renders it as plain text, never as
+  HTML.
+- **The command is never written into a chat note.** A chat is a file every
+  member reads and git keeps. The chat gets a marker and a neutral line; the
+  command comes from the owner-only API.
+- **No silent outcome.** A timeout or any failure leaves the agent's normal
+  terminal prompt to answer. Nothing allows or denies on its own.
+- **No "always allow".** One press approves one command. "Allow for this
+  session" returns only the rule the agent itself suggested (for a command,
+  that exact command), forced to the current session, so nothing is written
+  to the agent's settings files; it is offered only when there is such a
+  suggestion, and the card says what it allows.
+- **A question is answered, not allowed.** An AskUserQuestion card cannot be
+  plainly allowed, only answered or denied, and its questions are parsed with
+  the same strict rules as a command.
+- **The card cannot show a different path.** A file path is shortened only
+  when that cannot change where it points: `~` stands only for the agent's own
+  home (from its working folder), and a path with `.`, `..`, an empty segment
+  or a backslash is shown whole. The file being written is never cut in the
+  middle; long content shows its first 40 lines and says how many are not
+  shown.
+- **Notices carry no agent text into the chat.** The chat gets a fixed line
+  ("Builder on mini is waiting."); the agent's own message is shown only in
+  the owner's approvals list.
+- **Caps.** 64 KB per request, 100 pending per account and 20 per machine
+  label, 60 minutes at most; 50 notices per account, kept 12 hours.
+- **The allow list from `hook-config`** lets a Claude Code agent run five
+  chat commands (`wait`, `read`, `post`, `status`, `leave`) without asking.
+  Tested on Claude Code 2.1.295: such a rule also passes `< file` for a file
+  inside the agent's folder (it asks for one outside, and for `$(...)`,
+  backticks and `> file`). So the agent can post anything it can read in its
+  folder into the chat without asking. Keep agent chats private, and leave the
+  allow list out for an agent that works on secrets.
+  Requests live in memory only, so nothing about them is written to disk.
+- **The machine decides what may go remote.** `~/.config/mdnest/approvals.conf`
+  names the one server that may answer, which tools may be sent, and text
+  (`sudo`, `.ssh`, ...) that always stays in the terminal. It is read as data
+  and never run.
+
 ---
 
 ## Layer 3 — Authorization
