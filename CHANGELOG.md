@@ -4,7 +4,14 @@ All notable changes to mdnest are documented here.
 
 ---
 
-## v4.8.5 (in progress)
+## v4.8.5: Approve agents from mdnest, and get the CLI from your server
+
+You can now answer a coding agent's permission prompt from mdnest, in the
+browser or on your phone (experimental, off by default). Every server serves
+the CLI it was built with, and the Settings CLI tab has separate Install,
+Update and Connect commands. `mdnest login` can ask for the token instead of
+taking it on the command line. The backend moves to Go 1.26.9 for twelve
+security advisories. The guided setup now needs Docker Compose 2.17 or newer.
 
 ### Added (experimental)
 

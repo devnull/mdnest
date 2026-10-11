@@ -175,7 +175,7 @@ func (h *ConfigHandler) HandleConfig(w http.ResponseWriter, r *http.Request) {
 		"liveCollab":   h.liveCollab,
 		"require2FA":   h.require2FA,
 		"userProvider": h.userProvider,
-		"version":      "4.8.5-dev",
+		"version":      "4.8.5",
 		"commit":       Commit,
 		"buildTime":    BuildTime,
 		"defaultTheme": h.defaultThemeOrAuto(),
