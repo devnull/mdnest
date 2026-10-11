@@ -4,6 +4,8 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.6 (in progress)
+
 ## v4.8.5: Approve agents from mdnest, and get the CLI from your server
 
 You can now answer a coding agent's permission prompt from mdnest, in the
