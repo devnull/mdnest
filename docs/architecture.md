@@ -245,7 +245,7 @@ Routes are registered on a standard `http.ServeMux` in `main.go`. The set varies
 | Route | Handler | Notes |
 |---|---|---|
 | `GET /api/me` | `meHandler.HandleMe` | Returns role, grants, `is_super_admin`, `admin_namespaces`. |
-| `* /api/admin/users` | `adminHandler.HandleUsers` | GET filtered by scope; PUT/DELETE = SuperAdmin only. |
+| `* /api/admin/users` | `adminHandler.HandleUsers` | GET lists every user for any admin (v4.8.6+); PUT/DELETE = SuperAdmin only. |
 | `POST /api/admin/invite` | `adminHandler.HandleInvite` | Namespace required for non-superadmin callers. |
 | `* /api/admin/grants` | `adminHandler.HandleGrants` | CRUD; scoped to caller's admin namespaces. |
 | `* /api/admin/namespace-admins` | `adminHandler.HandleNamespaceAdmins` | (v3.5.0+) Promote/demote per-namespace admins. |

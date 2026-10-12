@@ -84,6 +84,7 @@ backend/
     totp_store.go            # Firestore-backed store.TOTPStore impl
   secrets/                   # AES-256-GCM sealing for git credentials at rest (v4.0.0+)
     secrets.go               # DeriveKey/Encrypt/Decrypt — same construction as the MCP OAuth sealing
+  gitproc/                   # v4.8.6+ (#132): gitproc.Command is exec.CommandContext("git") that kills git's whole PROCESS GROUP on cancel and sets WaitDelay. Use it for any git call that talks to a remote. A context timeout alone does not hold: killing git leaves git-remote-https / ssh alive holding git's stderr pipe, so Wait never returns. storage/git.go (fetch, push) and handlers/sync.go wrap each call in a 2 minute timeout (package vars, shortened by the stall tests).
   relpath/                   # The one lexical rule for namespace-relative paths (relpath.Clean). Leaf package on purpose: handlers.SafeRelPath IS relpath.Clean, and the permission middleware cleans ?path=/from=/to= with it before checking grants. Before v4.5.5 the middleware checked the raw string while handlers acted on the cleaned one, so a ".." segment walked a request out of a path-scoped grant. Never authorise a path you have not cleaned the same way the handler will.
   storage/                   # Pluggable note persistence behind STORAGE_BACKEND (v4.0.0+)
     storage.go               # Storage interface — namespace-scoped, backend-agnostic. Optional capabilities: RangeReadable, LinkResolver (v4.6.2), Annotator (a line in the namespace's next commit body, kept to one line by oneLine so a path cannot forge a trailer). A wrapper (CoherentStorage) must FORWARD each one explicitly — embedding an interface does not promote methods outside it; TestStacksImplementLinkResolver / TestStacksImplementAnnotator pin every stack.
@@ -328,7 +329,7 @@ mdnest.conf.sample           # Template config with MOUNT_ entries
 - **Validate before you conclude, and before you persist.** Two failures of the same shape shipped together in `login`: reporting "this server has no SERVER_ALIAS configured" for a host we never reached (the curl exit code was thrown away, so "couldn't connect" and "connected, no alias" were one empty string), and saving a non-URL to disk — where it became the *default* server. Keep curl's exit status when the reason matters (`fetch_server_config` + `curl_reason`), and never write config you haven't validated.
 
 ### Docker
-- Backend: golang:1.24-alpine build, alpine runtime
+- Backend: golang:1.24-alpine build, alpine runtime. **tini is PID 1** (v4.8.6+, #133): `ENTRYPOINT ["/sbin/tini", "--"]`. With mdnest as PID 1, git helpers orphaned by a timeout were never reaped and piled up as zombies until the pod hit its PID limit. Do not override the backend container's command/entrypoint in Helm or compose without keeping tini. `tests/backend-image-init.sh` (pre-push Docker tier) pins it.
 - Frontend: node:20-alpine build, nginx:alpine serve
 - Nginx proxies /api/ to backend service
 - SPA fallback: try_files -> /index.html
