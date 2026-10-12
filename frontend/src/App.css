@@ -5788,6 +5788,7 @@ pre:hover .code-copy-btn {
   font-size: 0.85rem;
   width: 220px;
 }
+.adm-subject-find { width: 130px; }
 .adm-role { margin-left: 8px; vertical-align: 1px; font-size: 0.7rem; }
 .adm-sec { margin-top: 16px; }
 .adm-sec h4,

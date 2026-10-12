@@ -23,7 +23,7 @@ import {
 } from '../api.js';
 import PathPicker from './PathPicker.jsx';
 import { GitBackup, AddNamespace, GitConnections } from './AdminGit.jsx';
-import { buildDirectory, name, pathLabel, viaLabel, accessSummary, matchesPerson } from '../adminDirectory.js';
+import { buildDirectory, name, pathLabel, viaLabel, accessSummary, matchesPerson, pickerChoices, pickerLabel } from '../adminDirectory.js';
 
 // People and Namespaces: the two ways an admin looks at access. Both read the
 // same directory (users, their grants, groups, namespace admins), so a change
@@ -569,6 +569,8 @@ export function NamespacesTab({ isSuperAdmin, namespaces, grantMaxDepth, directo
 
 function NamespaceCard({ ns, view, groups, people, open, onToggle, isSuperAdmin, grantMaxDepth, run, gitSection }) {
   const [subject, setSubject] = useState('');
+  const [find, setFind] = useState('');
+  const choices = pickerChoices(people, groups, find, subject);
   const admins = view.members.filter((m) => m.isAdmin);
   const groupCount = new Set(view.groups.map((g) => g.group.id)).size;
   const summary = [
@@ -581,6 +583,7 @@ function NamespaceCard({ ns, view, groups, people, open, onToggle, isSuperAdmin,
     const [kind, id] = subject.split(':');
     run(() => (kind === 'g' ? adminCreateGroupGrant(Number(id), ns, path, perm) : adminCreateGrant(Number(id), ns, path, perm)));
     setSubject('');
+    setFind('');
   };
 
   return (
@@ -671,17 +674,31 @@ function NamespaceCard({ ns, view, groups, people, open, onToggle, isSuperAdmin,
             <h4>Give access</h4>
             <AddAccessRow lockedNs={ns} grantMaxDepth={grantMaxDepth} label="+ Give access" onAdd={give} ready={!!subject}
               subjectPicker={(
-                <select value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Person or group" data-testid="adm-ns-subject">
-                  <option value="">{isSuperAdmin && groups.length ? 'Person or group…' : 'Person…'}</option>
-                  {isSuperAdmin && groups.length > 0 && (
-                    <optgroup label="Groups">
-                      {groups.map((g) => <option key={g.id} value={`g:${g.id}`}>{g.name}</option>)}
-                    </optgroup>
+                <>
+                  {people.length > 6 && (
+                    <input className="adm-search adm-subject-find" placeholder="Find…" value={find}
+                      onChange={(e) => setFind(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                      aria-label="Find a person or group" data-testid="adm-ns-subject-find" />
                   )}
-                  <optgroup label="People">
-                    {people.map((p) => <option key={p.user.id} value={`u:${p.user.id}`}>{name(p.user)}</option>)}
-                  </optgroup>
-                </select>
+                  <select value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Person or group" data-testid="adm-ns-subject">
+                    <option value="">
+                      {choices.people.length + (isSuperAdmin ? choices.groups.length : 0) === 0
+                        ? 'Nobody matches'
+                        : (isSuperAdmin && groups.length ? 'Person or group…' : 'Person…')}
+                    </option>
+                    {isSuperAdmin && choices.groups.length > 0 && (
+                      <optgroup label="Groups">
+                        {choices.groups.map((g) => <option key={g.id} value={`g:${g.id}`}>{g.name}</option>)}
+                      </optgroup>
+                    )}
+                    {choices.people.length > 0 && (
+                      <optgroup label="People">
+                        {choices.people.map((p) => <option key={p.user.id} value={`u:${p.user.id}`}>{pickerLabel(p.user)}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </>
               )} />
           </section>
         </div>

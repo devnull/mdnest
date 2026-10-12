@@ -120,6 +120,25 @@ export function matchesPerson(person, query) {
   return hay.includes(q);
 }
 
+// The "Give access" picker on a namespace card lists every person, which on a
+// big SSO install is everyone who has signed in. pickerChoices narrows it with
+// the same filter as the People tab, and always keeps the current selection,
+// or the <select> would show a different person than the one it submits.
+export function pickerChoices(people, groups, query, selected) {
+  const q = (query || '').trim().toLowerCase();
+  const keep = (key) => key === selected;
+  return {
+    people: people.filter((p) => keep(`u:${p.user.id}`) || matchesPerson(p, q)),
+    groups: groups.filter((g) => keep(`g:${g.id}`) || !q || (g.name || '').toLowerCase().includes(q)),
+  };
+}
+
+// A person's name in a picker. The email is added when there is a separate
+// username, so two people with the same name can be told apart.
+export function pickerLabel(u) {
+  return u.username && u.email && u.username !== u.email ? `${u.username} (${u.email})` : name(u);
+}
+
 // Where a namespace's git backup comes from, for its card in the Namespaces
 // tab. workspaces: the admin workspace list (one row per namespace that has a
 // git config); connections: the saved git connections (the API calls them
