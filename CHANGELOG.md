@@ -4,6 +4,8 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.7 (in progress)
+
 ## v4.8.6: Git sync that cannot hang, and namespace admins can add anyone
 
 A git remote that stops answering can no longer hang the server or slowly use
