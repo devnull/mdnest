@@ -336,7 +336,7 @@ curl -X POST "http://localhost:8286/api/admin/invite" \
 
 ### GET /api/admin/users
 
-List users. Available to any admin role; **the result is filtered by caller scope**: SuperAdmin sees all; namespace admin sees only users with grants or `namespace_admins` entries on namespaces they administer (plus self).
+List users. Available to any admin role, and every admin gets the full list *(v4.8.6+)*: a namespace admin needs to see people who have no access yet in order to give them their first grant. What they can change is still limited to their own namespaces (grants and namespace admins), and changing roles or deleting users stays SuperAdmin only. Before v4.8.6 a namespace admin only saw users who already had access to one of their namespaces.
 
 **Response** (200 OK):
 

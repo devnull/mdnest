@@ -74,7 +74,7 @@ The panel has three tabs for access, and each answers one question:
 
 - **People**: what can this person reach? Click a person to see their role, their groups, the namespaces they administer, their direct access, and a **Can reach** list that adds it all up, with the reason for each line ("via qa-team", "via Direct", "via Admin"). Everything about one person is changed from that card.
 - **Groups**: who is in a group, and what the group can reach. Give access to a group once and every member gets it.
-- **Namespaces**: who can reach this namespace? Each namespace lists everyone with access, directly or through a group, and who administers it. **Give access** takes a person or a group.
+- **Namespaces**: who can reach this namespace? Each namespace lists everyone with access, directly or through a group, and who administers it. **Give access** takes a person or a group. A namespace admin can pick anyone with an account, including people who have no access yet; with more than six people, type in the **Find** box next to the list to narrow it by name, email or group.
 
 **Git backup and adding namespaces.** Where a namespace comes from depends on how notes are stored:
 
