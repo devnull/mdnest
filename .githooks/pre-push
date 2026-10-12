@@ -379,6 +379,25 @@ if [ "$RUN_E2E" -eq 1 ] && [ "${MDNEST_SKIP_E2E:-0}" != "1" ]; then
     fi
   fi
 
+  # 9a2. Backend image init (#133): PID 1 must be tini and must reap orphaned
+  # processes, or git helpers killed on a timeout pile up as zombies.
+  echo -n "Backend image init (tini reaps orphans)... "
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    echo "SKIPPED (docker not available, run 'bash tests/backend-image-init.sh' before merging)"
+  else
+    bash tests/backend-image-init.sh > /tmp/mdnest-image-init.log 2>&1
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "OK"
+    elif [ "$rc" -eq 2 ]; then
+      echo "SKIPPED (docker missing, see /tmp/mdnest-image-init.log)"
+    else
+      echo "FAILED"
+      echo "  See /tmp/mdnest-image-init.log, reproduce with: bash tests/backend-image-init.sh"
+      FAILED=1
+    fi
+  fi
+
   # 9b. Browser end-to-end (Playwright): boot the FULL stack (nginx frontend +
   # backend) and drive the important UI flows in a real browser — login, tree,
   # open/render a note, Live + Basic editors, search, create. Needs node +

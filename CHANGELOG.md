@@ -4,6 +4,48 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.6: Git sync that cannot hang, and namespace admins can add anyone
+
+A git remote that stops answering can no longer hang the server or slowly use
+up its processes. Namespace admins can now give access to people who have none
+yet. Thanks to [@ecthelion77](https://github.com/ecthelion77) (Olivier
+Gintrand) for all three fixes, each found on a production install.
+
+### Fixed
+
+- **A git remote that stops answering no longer hangs the server**
+  ([#132](https://github.com/mahsanamin/mdnest/pull/132)). On git storage,
+  fetch and push had no time limit. A remote that accepted the connection and
+  then went silent left the sync stuck forever, and each stuck sync held on to
+  a thread. Over days that used up the process limit and took the node down.
+  Every git call that talks to a remote now stops after 2 minutes, together
+  with the helper processes git starts, and the sync retries later as it does
+  for any other failure. The manual "Sync now" and history calls have the same
+  limit.
+- **Stopped git helpers are now cleaned up**
+  ([#133](https://github.com/mahsanamin/mdnest/pull/133)). The backend image
+  now starts mdnest under `tini`. Before, mdnest itself was the container's
+  first process, and helper processes left behind by git were never cleaned
+  up, piling up until the container could not start new ones. Shutdown
+  works as before.
+- **A namespace admin can give someone their first access**
+  ([#134](https://github.com/mahsanamin/mdnest/pull/134)). The person picker
+  only listed people who already had access to that admin's namespaces, so a
+  new colleague never appeared, and inviting them failed because their account
+  already existed (common with SSO auto-provisioning). Namespace admins now see
+  every user. They can still only change access to their own namespaces.
+- **The Give access list can be searched.** Now that it can hold everyone, a
+  Find box next to it narrows the list by name, email or group, and each
+  person shows with their email so two people with the same name can be told
+  apart.
+
+### Docs
+
+- The README and the security guide now say exactly what reaches the internet
+  by default: the hourly check for a new release (`DISABLE_UPDATE_CHECK=true`
+  turns it off) and the drawing editor's fonts, which the browser loads from a
+  public CDN.
+
 ## v4.8.5: Approve agents from mdnest, and get the CLI from your server
 
 You can now answer a coding agent's permission prompt from mdnest, in the

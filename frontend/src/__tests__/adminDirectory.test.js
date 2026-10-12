@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDirectory, viaLabel, accessSummary, matchesPerson, strongerPermission, gitBackupFor } from '../adminDirectory.js';
+import { buildDirectory, viaLabel, accessSummary, matchesPerson, strongerPermission, gitBackupFor, pickerChoices, pickerLabel } from '../adminDirectory.js';
 
 const users = [
   { id: 1, username: 'ahsan', email: 'a@x', role: 'superadmin' },
@@ -71,6 +71,22 @@ describe('admin directory', () => {
     expect(dir.people.filter((p) => matchesPerson(p, 'qa')).map((p) => p.user.username)).toEqual(['alex', 'jo']);
     expect(dir.people.filter((p) => matchesPerson(p, 'SAM@')).map((p) => p.user.username)).toEqual(['sam']);
     expect(dir.people.filter((p) => matchesPerson(p, '')).length).toBe(4);
+  });
+
+  it('the Give access picker narrows people and groups, and keeps the selection', () => {
+    const names = (c) => [c.people.map((p) => p.user.username), c.groups.map((g) => g.name)];
+    expect(names(pickerChoices(dir.people, groups, 'jo', ''))).toEqual([['jo'], []]);
+    expect(names(pickerChoices(dir.people, groups, 'WRIT', ''))).toEqual([[], ['writers']]);
+    expect(names(pickerChoices(dir.people, groups, '', '')).map((l) => l.length)).toEqual([4, 2]);
+    // The selected person stays listed even when the filter no longer matches.
+    expect(names(pickerChoices(dir.people, groups, 'zzz', 'u:3'))).toEqual([['sam'], []]);
+    expect(names(pickerChoices(dir.people, groups, 'zzz', 'g:11'))).toEqual([[], ['writers']]);
+  });
+
+  it('picker labels add the email only when it tells people apart', () => {
+    expect(pickerLabel({ id: 1, username: 'sam', email: 'sam@x' })).toBe('sam (sam@x)');
+    expect(pickerLabel({ id: 2, username: 'a@x', email: 'a@x' })).toBe('a@x');
+    expect(pickerLabel({ id: 3, email: 'b@x' })).toBe('b@x');
   });
 
   it('write beats read whichever comes first', () => {
