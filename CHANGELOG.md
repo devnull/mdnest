@@ -4,7 +4,14 @@ All notable changes to mdnest are documented here.
 
 ---
 
-## v4.8.7 (in progress)
+## v4.8.7: Personal Git backup is back, and images without a title open again
+
+You can manage the Git backup of your personal namespace from Settings again,
+and a personal namespace whose backup is off is no longer pushed to the shared
+repository. Images without a title load in the Live editor again, and
+`./mdnest-server status` reports containers that never started. Thanks to
+[@ecthelion77](https://github.com/ecthelion77) (Olivier Gintrand) and
+[@devnull](https://github.com/devnull) for their contributions.
 
 ### Added
 
