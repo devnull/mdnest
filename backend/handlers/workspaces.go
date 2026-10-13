@@ -107,8 +107,6 @@ func (h *WorkspaceHandler) requireEncryptionForCredential(cred *string) error {
 	return errors.New("cannot store a credential on this server: set MDNEST_ENCRYPTION_KEY (or a non-default MDNEST_JWT_SECRET) so credentials can be sealed at rest")
 }
 
-// personalNamespace resolves the caller's personal-workspace namespace: their
-// email address, so it is recognisable.
 // IsPersonalNamespaceName reports whether ns is a personal namespace. A
 // personal namespace is named after its owner's email, and namespacePattern
 // keeps '@' out of every other namespace name, so the name alone tells — even
@@ -117,6 +115,37 @@ func IsPersonalNamespaceName(ns string) bool {
 	return strings.Contains(ns, "@")
 }
 
+// WorkspaceRemoteResolver adapts the workspaces store to the git writer's
+// remote resolver. A personal namespace only ever pushes to the repository its
+// owner set up: with the backup paused, turned off or its owner deleted it is
+// local-only (storage.ErrLocalOnly), never the deployment's default remote.
+// Kept out of main so a test can pin that rule: a regression here would push
+// private notes into the shared repository group, which cannot be undone.
+func WorkspaceRemoteResolver(lookup func(ns string) (*store.WorkspaceRemote, error)) storage.RemoteResolver {
+	return storage.RemoteResolverFunc(func(ns string) (storage.RemoteSpec, bool, error) {
+		r, err := lookup(ns)
+		if err != nil {
+			return storage.RemoteSpec{}, false, err
+		}
+		if r == nil {
+			if IsPersonalNamespaceName(ns) {
+				return storage.RemoteSpec{}, false, storage.ErrLocalOnly
+			}
+			return storage.RemoteSpec{}, false, nil
+		}
+		return storage.RemoteSpec{
+			Transport:  r.Transport,
+			RemoteURL:  r.RemoteURL,
+			Username:   r.Username,
+			Branch:     r.Branch,
+			Credential: r.Credential,
+			KnownHosts: r.KnownHosts,
+		}, true, nil
+	})
+}
+
+// personalNamespace resolves the caller's personal-workspace namespace: their
+// email address, so it is recognisable.
 func (h *WorkspaceHandler) personalNamespace(userID int) (string, error) {
 	if h.users == nil {
 		return "", errors.New("user lookup unavailable")

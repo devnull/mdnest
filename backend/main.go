@@ -376,29 +376,7 @@ func main() {
 		// this adapter feeds the git committer, overriding the coarse
 		// GIT_REMOTE_URL default per namespace.
 		workspaceStore = store.NewPostgresWorkspaceStore(db, encryptionSecret)
-		wsResolver.Set(storage.RemoteResolverFunc(func(ns string) (storage.RemoteSpec, bool, error) {
-			r, err := workspaceStore.RemoteForNamespace(ns)
-			if err != nil {
-				return storage.RemoteSpec{}, false, err
-			}
-			if r == nil {
-				// A personal namespace only ever pushes to the repository its
-				// owner set up: backup paused, turned off or owner deleted
-				// means local-only, never the deployment default remote.
-				if handlers.IsPersonalNamespaceName(ns) {
-					return storage.RemoteSpec{}, false, storage.ErrLocalOnly
-				}
-				return storage.RemoteSpec{}, false, nil
-			}
-			return storage.RemoteSpec{
-				Transport:  r.Transport,
-				RemoteURL:  r.RemoteURL,
-				Username:   r.Username,
-				Branch:     r.Branch,
-				Credential: r.Credential,
-				KnownHosts: r.KnownHosts,
-			}, true, nil
-		}))
+		wsResolver.Set(handlers.WorkspaceRemoteResolver(workspaceStore.RemoteForNamespace))
 
 		// The durability writer records each namespace's last mirror sync outcome
 		// on its workspace row so the owner sees why mirroring fails (bad token,

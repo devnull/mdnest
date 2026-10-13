@@ -25,18 +25,30 @@ async function auth(request) {
   return {Authorization:'Bearer '+(await response.json()).token};
 }
 function noteURL(path) { return `/api/note?ns=${NS}&path=${encodeURIComponent(path)}`; }
+// Every note and image this spec writes lives under one folder, deleted after
+// each test, so nothing is left in the shared namespace for later specs.
+const BASE = `e2e-image-title-${Date.now()}`;
+test.afterEach(async ({request}) => {
+  const headers = await auth(request);
+  await request.delete(noteURL(BASE), {headers}).catch(() => {});
+});
 async function open(page, path) {
-  // Wait for namespace/tree initialisation before choosing the note.
-  const row=page.locator('.tree-label', {hasText:path});
+  // Wait for namespace/tree initialisation, open the fixture folder, then
+  // choose the note.
+  const [folder, file] = path.split('/');
+  const dir=page.locator('.tree-label', {hasText:folder});
+  await expect(dir).toBeVisible();
+  await dir.click();
+  const row=page.locator('.tree-label', {hasText:file});
   await expect(row).toBeVisible();
   await row.click();
-  await expect(page.locator('.toolbar-path')).toContainText(path);
+  await expect(page.locator('.toolbar-path')).toContainText(file);
   await page.getByRole('button', {name:'Live',exact:true}).click();
 }
 if (process.env.MDNEST_IMAGE_BASELINE === '1') {
   test('image regression: stock frontend reproduces null-title failure', async ({page,request})=>{
     const headers=await auth(request);
-    const path=`baseline-image-${Date.now()}.md`;
+    const path=`${BASE}/baseline-image.md`;
     expect((await request.post(noteURL(path),{headers,data:cases.inline})).ok()).toBeTruthy();
     const errors=[];
     page.on('console',m=>{if(m.type()==='error') errors.push(m.text())});
@@ -48,7 +60,7 @@ if (process.env.MDNEST_IMAGE_BASELINE === '1') {
   for (const [kind,content] of Object.entries(cases)) {
     test(`image regression: ${kind} renders, saves and reopens`, async ({page,request})=>{
       const headers=await auth(request);
-      const path=`image-${kind}-${Date.now()}.md`;
+      const path=`${BASE}/image-${kind}.md`;
       expect((await request.post(noteURL(path),{headers,data:content})).ok()).toBeTruthy();
       const fileName=kind==='spaced-path'?'sample image.png':'sample.png';
       const upload=await request.post(`/api/upload?ns=${NS}&path=${path}`,{headers,multipart:{file:{name:fileName,mimeType:'image/png',buffer:PNG}}});
@@ -81,12 +93,12 @@ if (process.env.MDNEST_IMAGE_BASELINE === '1') {
       expect(saved).toMatch(/sample\.png|sample(?:%20| )image\.png/);
       if(kind.includes('titled')) expect(saved).toContain('My image');
       await page.reload();
-      await expect(page.locator('.toolbar-path')).toContainText(path);
+      await expect(page.locator('.toolbar-path')).toContainText(path.split('/').pop());
       await expect(page.locator('.milkdown img')).toHaveCount(1);
       await expect.poll(()=>page.locator('.milkdown img').evaluate(i=>i.complete&&i.naturalWidth===64)).toBe(true);
       await expect(page.locator('.ProseMirror')).toContainText(marker);
       expect(errors.join('\n')).not.toMatch(/RangeError|Expected value/);
-      const download=await request.get(`/api/files/${NS}/${encodeURIComponent(fileName)}`,{headers});
+      const download=await request.get(`/api/files/${NS}/${BASE}/${encodeURIComponent(fileName)}`,{headers});
       expect(download.status()).toBe(200);
       expect(await download.body()).toEqual(PNG);
     });

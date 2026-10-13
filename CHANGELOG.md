@@ -6,6 +6,20 @@ All notable changes to mdnest are documented here.
 
 ## v4.8.7 (in progress)
 
+### Added
+
+- **Settings has a Git backup screen for your personal namespace again**
+  ([#137](https://github.com/mahsanamin/mdnest/pull/137), fixing
+  [#135](https://github.com/mahsanamin/mdnest/issues/135)). v4.8.4 removed the
+  old "Git remote" tab while personal backups kept running, so nobody could
+  change or stop one from mdnest, not even to replace a leaked token. Settings
+  now has a **Personal namespace** tab, with the same Git backup section as
+  Admin → Namespaces: set up, edit, pause, resume or turn off. It only shows on
+  servers that keep namespaces in git. A superadmin can turn off someone's
+  backup from Admin → People, for when the owner has left; the notes and the
+  owner's access stay. Thanks to [@ecthelion77](https://github.com/ecthelion77)
+  (Olivier Gintrand).
+
 ### Fixed
 
 - `./mdnest-server status` now reports a backend or frontend that Docker refused
@@ -14,6 +28,20 @@ All notable changes to mdnest are documented here.
   running containers, so it said nothing while mdnest was down, and Docker does
   not retry these. It now names the address that failed and points to
   `./mdnest-server reload`.
+- **A personal namespace whose Git backup is off is no longer pushed to the
+  shared repository** ([#137](https://github.com/mahsanamin/mdnest/pull/137)).
+  On git storage with a default `GIT_REMOTE_URL`, a personal backup that was
+  paused, turned off, or whose owner was deleted fell back to that default, so
+  the private notes were pushed into the deployment's shared repository group
+  as `<email>.git` at every sync. Such a namespace now keeps its history on the
+  server only, and it no longer appears in Admin → Namespaces. A namespace name
+  containing `@` is treated as personal; admin-created names cannot contain one.
+- **Images without a title open in the Live editor again**
+  ([#139](https://github.com/mahsanamin/mdnest/pull/139)). A plain
+  `![alt](image.png)` with no title made the Live editor fail with
+  `RangeError: Expected value of type string for attribute title`, so the
+  image did not load and a save could lose it. Thanks to
+  [@devnull](https://github.com/devnull).
 
 ## v4.8.6: Git sync that cannot hang, and namespace admins can add anyone
 
