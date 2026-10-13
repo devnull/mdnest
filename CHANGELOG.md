@@ -6,6 +6,15 @@ All notable changes to mdnest are documented here.
 
 ## v4.8.7 (in progress)
 
+### Fixed
+
+- `./mdnest-server status` now reports a backend or frontend that Docker refused
+  to start because a `BIND_ADDRESS` IP was not up yet (`failed to bind host
+  port ...: cannot assign requested address`, exit 128). It only looked at
+  running containers, so it said nothing while mdnest was down, and Docker does
+  not retry these. It now names the address that failed and points to
+  `./mdnest-server reload`.
+
 ## v4.8.6: Git sync that cannot hang, and namespace admins can add anyone
 
 A git remote that stops answering can no longer hang the server or slowly use
