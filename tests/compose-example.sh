@@ -106,13 +106,19 @@ done
 if docker compose version >/dev/null 2>&1; then
   sandbox="$(mktemp -d)"
   cp "$FILE" "$sandbox/docker-compose.yml"
-  out=$(cd "$sandbox" && docker compose config -q 2>&1); rc=$?
-  if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q MDNEST_PASSWORD \
-     && printf '%s' "$out" | grep -q MDNEST_JWT_SECRET; then
-    ok "refuses to start without secrets, naming both"
-  else
-    bad "refuses to start without secrets, naming both" "rc=$rc: $out"
-  fi
+  # Each secret is checked with the other one set. Compose v2 lists every
+  # missing variable in one error, Compose v5 stops at the first, so leaving
+  # both unset only proves the first guard on newer versions.
+  for missing in MDNEST_PASSWORD MDNEST_JWT_SECRET; do
+    if [ "$missing" = MDNEST_PASSWORD ]; then present=MDNEST_JWT_SECRET; else present=MDNEST_PASSWORD; fi
+    printf '%s=x\n' "$present" > "$sandbox/.env"
+    out=$(cd "$sandbox" && env -u MDNEST_PASSWORD -u MDNEST_JWT_SECRET docker compose config -q 2>&1); rc=$?
+    if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "$missing"; then
+      ok "refuses to start without $missing, naming it"
+    else
+      bad "refuses to start without $missing, naming it" "rc=$rc: $out"
+    fi
+  done
   printf 'MDNEST_PASSWORD=p\nMDNEST_JWT_SECRET=s\n' > "$sandbox/.env"
   out=$(cd "$sandbox" && docker compose config -q 2>&1); rc=$?
   if [ $rc -eq 0 ]; then
