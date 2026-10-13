@@ -4,6 +4,8 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.8 (in progress)
+
 ## v4.8.7: Personal Git backup is back, and images without a title open again
 
 You can manage the Git backup of your personal namespace from Settings again,
