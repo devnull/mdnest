@@ -171,6 +171,29 @@ has   "nothing published: names it"      "$out" "backend is running but these po
 out="$(port_drift_report backend "" "")"; rc=$?
 eq    "no bindings configured (Caddy): no drift" "0" "$rc"
 
+# If the IP is missing when Docker starts the container, Docker refuses to start
+# it (exit 128) and never retries. Before this, `status` looked only at running
+# containers and said nothing at all.
+BIND_ERR='failed to set up container networking: driver failed programming external connectivity on endpoint mdnest-backend-1 (cab60055b163): failed to bind host port 100.64.0.5:8286/tcp: cannot assign requested address'
+out="$(bind_failure_report backend "$BIND_ERR")"; rc=$?
+eq    "never started (bind failure): reports it" "1" "$rc"
+has   "never started: says not running"    "$out" "backend is not running: Docker could not publish its port."
+has   "never started: names the IP:port"   "$out" "failed to bind host port 100.64.0.5:8286/tcp: cannot assign requested address"
+hasnt "never started: drops the endpoint id" "$out" "cab60055b163"
+hasnt "never started: does not claim running" "$out" "is running"
+has   "never started: gives the command"   "$out" "./mdnest-server reload"
+
+out="$(bind_failure_report backend "")"; rc=$?
+eq    "stopped on purpose (no error): no report" "0" "$rc"
+eq    "stopped on purpose: says nothing"   ""   "$out"
+
+out="$(bind_failure_report backend "OCI runtime create failed: exec: no such file")"; rc=$?
+eq    "other start error: left to compose ps" "0" "$rc"
+
+# port_drift must look at containers that are not running: `compose ps -q`
+# omits them, which is how the case above went unreported.
+has   "port_drift lists stopped containers too" "$(declare -f port_drift)" "compose ps -a -q"
+
 echo
 echo "=== $((PASS+FAIL)) checks: $(green "$PASS passed"), $([ "$FAIL" -gt 0 ] && red "$FAIL failed" || echo "0 failed") ==="
 [ "$FAIL" -eq 0 ]

@@ -105,12 +105,23 @@ namespace_drift_report() {
 # on an interface when the container starts. A Tailscale, VPN or DHCP address
 # can come up after Docker does, and the container then runs with no port and
 # nothing logs it: `docker ps` says Up, every request is refused.
+# If the IP is missing when Docker STARTS the container (rather than coming and
+# going later), Docker refuses to start it at all: "failed to bind host port
+# <ip>:<port>: cannot assign requested address", exit 128, and
+# `restart: unless-stopped` never retries it. `compose ps -q` lists only running
+# containers, so `-a` is needed to see that one.
 # Returns 1 when something is missing, so callers under `set -e` use `|| true`.
 port_drift() {
-  local svc cid want live rc=0
+  local svc cid want live running err rc=0
   for svc in backend frontend; do
-    cid=$(compose ps -q "$svc" 2>/dev/null | head -1 || true)
+    cid=$(compose ps -a -q "$svc" 2>/dev/null | head -1 || true)
     [ -n "$cid" ] || continue
+    running=$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || true)
+    if [ "$running" != "true" ]; then
+      err=$(docker inspect -f '{{.State.Error}}' "$cid" 2>/dev/null || true)
+      bind_failure_report "$svc" "$err" || rc=1
+      continue
+    fi
     want=$(docker inspect -f '{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostIp}}:{{.HostPort}}{{"\n"}}{{end}}{{end}}' "$cid" 2>/dev/null || true)
     live=$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}}:{{.HostPort}}{{"\n"}}{{end}}{{end}}' "$cid" 2>/dev/null || true)
     port_drift_report "$svc" "$want" "$live" || rc=1
@@ -132,6 +143,34 @@ port_drift_report() {
   echo "  ⚠  $svc is running but these ports are not published:${missing}"
   echo "     The IP was probably not up when the container started (after a"
   echo "     reboot or a Docker restart). Recreate the containers:"
+  echo ""
+  echo "    ./mdnest-server reload"
+  echo ""
+  echo "     To stop it happening again, bind 127.0.0.1 and put a reverse proxy"
+  echo "     in front. See BIND_ADDRESS in docs/setup.md."
+  echo ""
+  return 1
+}
+
+# For a container that is not running: if Docker's recorded start error is a
+# host-port bind failure, say so and give the fix. Any other stopped container
+# (stopped on purpose, crashed) is left to the `compose ps` table above it.
+# Returns 1 when it reported something.
+bind_failure_report() {
+  local svc="$1" err="$2" detail
+  case "$err" in
+    # Docker's full message leads with a long endpoint id; keep the part that
+    # names the IP and port.
+    *"failed to bind host port"*) detail="failed to bind host port${err#*failed to bind host port}" ;;
+    *"cannot assign requested address"*) detail="$err" ;;
+    *) return 0 ;;
+  esac
+  echo ""
+  echo "  ⚠  $svc is not running: Docker could not publish its port."
+  echo "     $detail"
+  echo "     The IP was probably not up when the container started (after a"
+  echo "     reboot or a Docker restart), and Docker does not retry. Recreate the"
+  echo "     containers:"
   echo ""
   echo "    ./mdnest-server reload"
   echo ""
