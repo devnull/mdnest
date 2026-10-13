@@ -84,7 +84,7 @@ backend:
   disableUpdateCheck: false
   # -- Extra backend environment variables (list of `{name,value}` or `{name,valueFrom}`).
   extraEnv: []
-  # -- Top-level namespaces to ensure exist under `/data/notes` on startup (idempotent init container). Empty disables it. Names must not contain `/` or `\` nor start with `.`.
+  # -- Top-level namespaces to ensure exist under `/data/notes` on startup (idempotent init container). Empty disables it. Names must not contain `/`, `\` or `@` (a name with `@` is treated as a personal namespace), nor start with `.`.
   namespaces: []
   # -- Image used by the namespace-provisioning init container.
   namespaceInitImage: busybox:1.36

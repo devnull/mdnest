@@ -20,7 +20,8 @@ import (
 
 // WorkspaceHandler serves per-workspace git remote configuration (multi mode).
 //
-//   - /api/admin/workspaces  (superadmin) — CRUD over shared/team workspaces.
+//   - /api/admin/workspaces  (superadmin) — CRUD over shared/team workspaces,
+//     plus turning off someone's personal Git backup (DELETE only).
 //   - /api/me/workspace      (any user)   — the caller's own personal workspace.
 //
 // The stored credential (PAT / SSH key) is never returned to a client; responses
@@ -94,7 +95,7 @@ func (h *WorkspaceHandler) requireEncryptionForMirror(gitEnabled bool) error {
 	if !gitEnabled || h.encryptionConfigured {
 		return nil
 	}
-	return errors.New("git mirroring is disabled on this server: set MDNEST_ENCRYPTION_KEY (or a non-default MDNEST_JWT_SECRET) so credentials can be sealed at rest")
+	return errors.New("git backup is disabled on this server: set MDNEST_ENCRYPTION_KEY (or a non-default MDNEST_JWT_SECRET) so credentials can be sealed at rest")
 }
 
 // requireEncryptionForCredential fails closed when a group would seal a shared
@@ -104,6 +105,43 @@ func (h *WorkspaceHandler) requireEncryptionForCredential(cred *string) error {
 		return nil
 	}
 	return errors.New("cannot store a credential on this server: set MDNEST_ENCRYPTION_KEY (or a non-default MDNEST_JWT_SECRET) so credentials can be sealed at rest")
+}
+
+// IsPersonalNamespaceName reports whether ns is a personal namespace. A
+// personal namespace is named after its owner's email, and namespacePattern
+// keeps '@' out of every other namespace name, so the name alone tells — even
+// once the backup row is gone (turned off, or the owner's account deleted).
+func IsPersonalNamespaceName(ns string) bool {
+	return strings.Contains(ns, "@")
+}
+
+// WorkspaceRemoteResolver adapts the workspaces store to the git writer's
+// remote resolver. A personal namespace only ever pushes to the repository its
+// owner set up: with the backup paused, turned off or its owner deleted it is
+// local-only (storage.ErrLocalOnly), never the deployment's default remote.
+// Kept out of main so a test can pin that rule: a regression here would push
+// private notes into the shared repository group, which cannot be undone.
+func WorkspaceRemoteResolver(lookup func(ns string) (*store.WorkspaceRemote, error)) storage.RemoteResolver {
+	return storage.RemoteResolverFunc(func(ns string) (storage.RemoteSpec, bool, error) {
+		r, err := lookup(ns)
+		if err != nil {
+			return storage.RemoteSpec{}, false, err
+		}
+		if r == nil {
+			if IsPersonalNamespaceName(ns) {
+				return storage.RemoteSpec{}, false, storage.ErrLocalOnly
+			}
+			return storage.RemoteSpec{}, false, nil
+		}
+		return storage.RemoteSpec{
+			Transport:  r.Transport,
+			RemoteURL:  r.RemoteURL,
+			Username:   r.Username,
+			Branch:     r.Branch,
+			Credential: r.Credential,
+			KnownHosts: r.KnownHosts,
+		}, true, nil
+	})
 }
 
 // personalNamespace resolves the caller's personal-workspace namespace: their
@@ -311,7 +349,7 @@ func (h *WorkspaceHandler) adminUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing.IsPersonal {
-		wsError(w, http.StatusForbidden, "personal workspaces are managed by their owner via /api/me/workspace")
+		wsError(w, http.StatusForbidden, "the git backup of a personal namespace is set up by its owner; a superadmin can only turn it off")
 		return
 	}
 	var req workspaceRequest
@@ -353,8 +391,16 @@ func (h *WorkspaceHandler) adminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existing, _ := h.store.Get(id)
+	// A superadmin can turn off someone's personal Git backup, for when the
+	// owner has left. Only the backup goes (its settings and the token the owner
+	// saved): the namespace, its notes and the owner's access stay, exactly as
+	// when the owner turns it off. The owner can set it up again.
 	if existing != nil && existing.IsPersonal {
-		wsError(w, http.StatusForbidden, "personal workspaces are managed by their owner")
+		if _, err := h.store.Delete(id); err != nil {
+			wsError(w, http.StatusInternalServerError, "failed to turn off the git backup")
+			return
+		}
+		wsJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 		return
 	}
 	deleted, err := h.store.Delete(id)
@@ -500,7 +546,7 @@ func (h *WorkspaceHandler) provisionedImplicitNamespaces(ctx context.Context) []
 	}
 	implicit := make([]string, 0)
 	for _, ns := range names {
-		if excluded[ns] {
+		if excluded[ns] || IsPersonalNamespaceName(ns) {
 			continue
 		}
 		implicit = append(implicit, ns)
@@ -750,7 +796,7 @@ func (h *WorkspaceHandler) minePut(w http.ResponseWriter, r *http.Request, userI
 		ws, err = h.store.Update(existing.ID, in)
 	}
 	if err != nil {
-		wsError(w, http.StatusInternalServerError, "failed to save workspace")
+		wsError(w, http.StatusInternalServerError, "failed to save the git backup")
 		return
 	}
 	// Only materialise the namespace once the workspace actually mirrors to a
@@ -774,11 +820,11 @@ func (h *WorkspaceHandler) mineDelete(w http.ResponseWriter, userID int) {
 		return
 	}
 	if existing == nil {
-		wsError(w, http.StatusNotFound, "no personal workspace")
+		wsError(w, http.StatusNotFound, "your personal namespace has no git backup")
 		return
 	}
 	if _, err := h.store.Delete(existing.ID); err != nil {
-		wsError(w, http.StatusInternalServerError, "failed to delete workspace")
+		wsError(w, http.StatusInternalServerError, "failed to turn off the git backup")
 		return
 	}
 	wsJSON(w, http.StatusOK, map[string]bool{"deleted": true})
@@ -833,9 +879,9 @@ func requireCredentialForMirror(in store.WorkspaceInput, hasExistingCredential b
 		return nil
 	}
 	if in.Transport == "ssh" {
-		return errors.New("an SSH private key is required to enable mirroring")
+		return errors.New("an SSH private key is required to turn on the git backup")
 	}
-	return errors.New("an access token is required to enable HTTPS mirroring")
+	return errors.New("an access token is required to turn on the git backup over HTTPS")
 }
 
 // validateRemote checks the URL shape per transport and enforces the optional

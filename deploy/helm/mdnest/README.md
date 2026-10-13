@@ -235,7 +235,7 @@ All traffic goes to the frontend Service, which proxies `/api` and `/api/ws` (We
 | backend.frontendOrigin | string | `"http://localhost"` | Public origin the browser uses to reach mdnest (CORS + SSO redirect URL). Set to your ingress URL in production. |
 | backend.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":10,"periodSeconds":20,"timeoutSeconds":3}` | Liveness probe (hits the unauthenticated `GET /api/config`). |
 | backend.namespaceInitImage | string | `"busybox:1.36"` | Image used by the namespace-provisioning init container. |
-| backend.namespaces | list | `[]` | Top-level namespaces to ensure exist under `/data/notes` on startup (idempotent init container). Empty disables it. Names must not contain `/` or `\` nor start with `.`. |
+| backend.namespaces | list | `[]` | Top-level namespaces to ensure exist under `/data/notes` on startup (idempotent init container). Empty disables it. Names must not contain `/`, `\` or `@` (a name with `@` is treated as a personal namespace), nor start with `.`. |
 | backend.nodeSelector | object | `{}` | Node selector for the backend. |
 | backend.podAnnotations | object | `{}` | Extra pod annotations for the backend. |
 | backend.podLabels | object | `{}` | Extra pod labels for the backend. |
