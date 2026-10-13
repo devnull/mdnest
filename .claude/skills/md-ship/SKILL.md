@@ -56,16 +56,21 @@ grep -c '<new-command>' mdnest          # expect ≥ 3 (if added there)
 ```
 
 ### 6. Website sync
-If `../mdnest-website` exists, copy the doc set + CHANGELOG over:
+Do not copy docs into `../mdnest-website`. Its copies are gitignored: the
+Cloudflare Pages build pulls `docs/*.md` and `CHANGELOG.md` from mdnest's
+`main` on every deploy. So the site only changes AFTER the release is on
+`main`, and only once a build runs. After step 11, start one:
 
 ```bash
-REPO="$(git rev-parse --show-toplevel)"
-WEBSITE="$REPO/../mdnest-website"
-[ -d "$WEBSITE" ] || { echo "no sibling mdnest-website — skipping website sync"; }
-
-cp "$REPO"/docs/*.md "$WEBSITE/docs/"
-cp "$REPO"/CHANGELOG.md "$WEBSITE/docs/changelog.md"
+cd ../mdnest-website && bash scripts/deploy.sh rebuild
 ```
+
+If the deploy hook is rejected (it returned HTTP 400 on 2026-10-13), a push
+to the website's `main` also builds it: `git commit --allow-empty -m
+"Rebuild for mdnest vX.Y.Z"` and push. Then tell the owner the hook needs
+recreating in Cloudflare (Pages > mdnest-website > Settings > Builds > Deploy
+hooks). Confirm with `curl -s https://mdnest.dev/docs/changelog` that the new
+version shows.
 
 ### 7. Website index.html (only for major features)
 If this is a headline feature, update `../mdnest-website/index.html`:
@@ -76,7 +81,7 @@ If this is a headline feature, update `../mdnest-website/index.html`:
 Bug fixes don't need landing-page changes.
 
 ### 8. Commit website
-Only if step 6 or 7 actually changed something in the website repo:
+Only if step 7 actually changed something in the website repo:
 
 ```bash
 cd "$WEBSITE"

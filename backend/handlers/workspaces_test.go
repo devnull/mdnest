@@ -25,6 +25,8 @@ type fakeWSStore struct {
 	inGroupNS   string
 	inGroupID   int
 	inGroupCall bool
+	updated     bool
+	deletedID   int
 }
 
 func (f *fakeWSStore) List() ([]store.Workspace, error)  { return nil, nil }
@@ -43,9 +45,10 @@ func (f *fakeWSStore) Create(in store.WorkspaceInput) (*store.Workspace, error) 
 }
 func (f *fakeWSStore) Update(_ int, in store.WorkspaceInput) (*store.Workspace, error) {
 	f.lastCreate = in
+	f.updated = true
 	return &store.Workspace{Namespace: in.Namespace, IsPersonal: in.IsPersonal}, nil
 }
-func (f *fakeWSStore) Delete(int) (bool, error) { return true, nil }
+func (f *fakeWSStore) Delete(id int) (bool, error) { f.deletedID = id; return true, nil }
 func (f *fakeWSStore) RemoteForNamespace(string) (*store.WorkspaceRemote, error) {
 	return nil, nil
 }
@@ -459,6 +462,86 @@ func (r *recordingStorage) RemoveAll(_ context.Context, ns, relPath string) erro
 }
 func (r *recordingStorage) MkdirAll(context.Context, string, string) error { return nil }
 
+// A superadmin turns off the Git backup of someone's personal namespace (the
+// owner has left). Only the backup row goes: the notes, the owner's grant and
+// the namespace admins stay — even when a synced copy exists, which for a team
+// namespace would let the decommission purge the folder.
+func TestAdminDeleteTurnsOffPersonalBackupOnly(t *testing.T) {
+	at := time.Now()
+	owner := 7
+	fs := &fakeWSStore{getResult: &store.Workspace{
+		ID: 9, Namespace: "leaver@example.com", OwnerID: &owner, IsPersonal: true,
+		GitEnabled: true, LastSyncAt: &at,
+	}}
+	gr := &fakeGrants{}
+	nsa := &fakeNsCleaner{}
+	rec := &recordingStorage{}
+	h := NewWorkspaceHandler(fs, nil, gr, rec, nil, true)
+	h.SetNamespaceAdminCleaner(nsa)
+	w := httptest.NewRecorder()
+	h.HandleAdmin(w, httptest.NewRequest(http.MethodDelete, "/api/admin/workspaces?id=9", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if fs.deletedID != 9 {
+		t.Fatalf("backup not removed: deletedID=%d", fs.deletedID)
+	}
+	if gr.deleted != "" || nsa.deleted != "" {
+		t.Errorf("access revoked on a personal namespace: grants=%q admins=%q", gr.deleted, nsa.deleted)
+	}
+	if len(rec.removedAll) > 0 {
+		t.Errorf("DATA LOSS: purged %v while only turning off a backup", rec.removedAll)
+	}
+}
+
+// A superadmin can turn a personal backup off, never point it somewhere else:
+// the repository and its token are the owner's choice.
+func TestAdminUpdateRefusesPersonalBackup(t *testing.T) {
+	owner := 7
+	fs := &fakeWSStore{getResult: &store.Workspace{ID: 9, Namespace: "u@example.com", OwnerID: &owner, IsPersonal: true}}
+	h := NewWorkspaceHandler(fs, nil, &fakeGrants{}, nil, nil, true)
+	body := `{"git_enabled":true,"transport":"https","remote_url":"https://evil.example.com/x.git","credential":"t"}`
+	w := httptest.NewRecorder()
+	h.HandleAdmin(w, httptest.NewRequest(http.MethodPut, "/api/admin/workspaces?id=9", strings.NewReader(body)))
+	if w.Code != http.StatusForbidden || fs.updated {
+		t.Fatalf("status=%d updated=%v, want 403 and no write", w.Code, fs.updated)
+	}
+}
+
+// Messages the personal Git backup screen can show must not use the words
+// "workspace" or "mirror", which read as the namespace on screen.
+func TestPersonalBackupMessagesAvoidInternalWords(t *testing.T) {
+	fs := &fakeWSStore{personal: map[int]*store.Workspace{}}
+	check := func(name string, w *httptest.ResponseRecorder) {
+		t.Helper()
+		msg := strings.ToLower(w.Body.String())
+		if strings.Contains(msg, "workspace") || strings.Contains(msg, "mirror") {
+			t.Errorf("%s: user-visible message %q", name, w.Body.String())
+		}
+	}
+
+	h := NewWorkspaceHandler(fs, fakeUsers{email: "u@example.com"}, &fakeGrants{}, nil, nil, true)
+	w := httptest.NewRecorder()
+	h.HandleMine(w, mineReq(7, `{"git_enabled":true,"transport":"https","remote_url":"https://gitlab.example.com/u/notes.git"}`))
+	check("no token", w)
+	w = httptest.NewRecorder()
+	h.HandleMine(w, mineReq(7, `{"git_enabled":true,"transport":"ssh","remote_url":"git@gitlab.example.com:u/notes.git"}`))
+	check("no key", w)
+
+	del := middleware.WithUser(httptest.NewRequest(http.MethodDelete, "/api/me/workspace", nil), &middleware.UserContext{ID: 7, Role: "collaborator"})
+	w = httptest.NewRecorder()
+	h.HandleMine(w, del)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("delete without backup: status=%d", w.Code)
+	}
+	check("nothing to turn off", w)
+
+	noKey := NewWorkspaceHandler(fs, fakeUsers{email: "u@example.com"}, &fakeGrants{}, nil, nil, false)
+	w = httptest.NewRecorder()
+	noKey.HandleMine(w, mineReq(7, `{"git_enabled":true,"transport":"https","remote_url":"https://gitlab.example.com/u/notes.git","credential":"t"}`))
+	check("no encryption key", w)
+}
+
 // TestStorageHasDurableCopy pins the predicate; this pins that decommission
 // actually *consults* it. Without this, deleting the condition from the call
 // site reinstates the original data-loss bug — purging a namespace whose notes
@@ -536,5 +619,19 @@ func TestLocalDiskRefusesRuntimeNamespaces(t *testing.T) {
 	NewWorkspaceHandler(&fakeWSStore{}, nil, nil, nil, nil, true).HandleStatus(w, httptest.NewRequest(http.MethodGet, "/api/workspaces/status", nil))
 	if !strings.Contains(w.Body.String(), `"mirroring":true`) {
 		t.Errorf("status on a git backend = %s, want mirroring true", w.Body.String())
+	}
+}
+
+// The writer keeps a personal namespace local-only once its backup row is gone,
+// and recognises it by name alone. That holds only while no admin-created
+// namespace can carry an '@'.
+func TestPersonalNamespaceNameNeverMatchesAdminNamespaces(t *testing.T) {
+	if !IsPersonalNamespaceName("someone@example.com") {
+		t.Fatal("an email namespace must be recognised as personal")
+	}
+	for _, ns := range []string{"team-a", "it.operations", "a@b", "x@example.com"} {
+		if namespacePattern.MatchString(ns) && IsPersonalNamespaceName(ns) {
+			t.Fatalf("namespacePattern accepts %q, which would be taken for a personal namespace", ns)
+		}
 	}
 }
