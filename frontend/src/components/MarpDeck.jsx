@@ -11,30 +11,13 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { Marp } from '@marp-team/marp-core';
 import { slideStarts } from '../marp.js';
-import { getMarpThemes } from '../api.js';
+import { cachedThemes, loadThemes } from '../marpThemes.js';
 import { exportHtml } from '../marpExport.js';
 import './MarpDeck.css';
 
-// Centralized Marp themes are fetched once and shared across every deck (a
-// global catalog, not scoped to any namespace). The admin theme editor calls
-// clearMarpThemeCache() after a change so the next deck render picks it up.
-let themeCache = null;
-let themePromise = null;
-
-export function clearMarpThemeCache() {
-  themeCache = null;
-  themePromise = null;
-}
-
-export function loadThemes() {
-  if (themeCache) return Promise.resolve(themeCache);
-  if (!themePromise) {
-    themePromise = getMarpThemes()
-      .then((t) => { themeCache = Array.isArray(t) ? t : []; return themeCache; })
-      .catch(() => { themeCache = []; return themeCache; });
-  }
-  return themePromise;
-}
+// The theme catalog lives in marpThemes.js, which does not import Marp. It
+// is re-exported here for the new-deck dialog, which loads this module anyway.
+export { loadThemes };
 
 // builtinThemeCss returns the stylesheet of each of Marp's built-in themes,
 // by name. The new-deck dialog reads the slide classes each theme defines.
@@ -83,7 +66,7 @@ export default function MarpDeck({ content, scrollPct, caret, title, exportable 
   // Centralized themes load asynchronously; until then we render with the
   // built-in themes only (a deck that selects a custom theme falls back to
   // `default` for one frame, then re-renders once the catalog arrives).
-  const [themes, setThemes] = useState(() => themeCache || []);
+  const [themes, setThemes] = useState(() => cachedThemes() || []);
   useEffect(() => {
     let cancelled = false;
     loadThemes().then((t) => { if (!cancelled) setThemes(t); });

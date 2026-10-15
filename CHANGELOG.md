@@ -32,8 +32,24 @@ All notable changes to mdnest are documented here.
   preview fills its box in the deck's own shape (16:9 or 4:3) and follows the
   light theme, the form and preview sit side by side on a wide screen, and on
   a phone Cancel and Create stay on screen. The sidebar's create buttons sit
-  two by two when all four are on, instead of squeezing into one row. Typing in the dialog no longer redraws the preview on every key, and
-  the deck viewer reuses its Marp engine, which halves the cost of a redraw.
+  two by two when all four are on, instead of squeezing into one row. Typing
+  in the dialog no longer redraws the preview on every key, and the deck
+  viewer reuses its Marp engine, which halves the cost of a redraw.
+
+- **The first page load is about 8 times smaller.** The app's entry
+  bundle went from 4.4 MB (1.41 MB gzipped) to 0.56 MB (166 KB gzipped). The
+  Marp slide engine and the Firebase sign-in SDK were in it for everyone,
+  pulled in by the admin panel's theme cache and by the Firebase setup code.
+  Both now load only when a deck is opened or a Firebase-mode server asks
+  for sign-in. A test fails if either comes back into the entry bundle.
+
+### Fixed
+
+- **A link opened while the app finishes loading opens the note.** A link
+  put in the address bar right after sign-in, or while the app updated its
+  own state, could land on the bare namespace ("No file selected"): the
+  browser updates the address at once but reports the change a moment later,
+  and the app wrote its own route over the link in between.
 
 ## v4.8.7: Personal Git backup is back, and images without a title open again
 
