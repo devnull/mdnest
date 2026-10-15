@@ -423,3 +423,20 @@ export function saveDraft(ns, path, text) {
     if (text) localStorage.setItem(k, text); else localStorage.removeItem(k);
   } catch { /* storage unavailable: the in-memory copy still holds it */ }
 }
+
+// Where you were reading in each chat, kept for this page load only. The
+// docked panel and the full-screen view are two separate mounts of the same
+// conversation, and so is a tab switch in the side panel; without this every
+// one of them jumped back to the newest message. Kept as the message at the
+// top of the view plus how far into it you had scrolled, not as a pixel
+// offset, because the two views have different widths and so different
+// heights for the same messages. null `n` means "at the bottom".
+const scrollSpots = new Map();
+
+export function rememberScroll(ns, path, spot) {
+  scrollSpots.set(`${ns}/${path}`, spot);
+}
+
+export function recallScroll(ns, path) {
+  return scrollSpots.get(`${ns}/${path}`) || null;
+}

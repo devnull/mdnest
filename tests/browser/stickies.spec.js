@@ -80,6 +80,13 @@ async function openPanel(page) {
 // already open — and clicking the toolbar button then fails, because the
 // full-screen board is covering the toolbar.
 async function openBoard(page) {
+  // Right after a reload the toolbar draws before the board route is
+  // applied, so "no board yet" does not mean "no board coming": clicking the
+  // toolbar then races the board sliding over it. The URL says which it is.
+  if (page.url().includes('#!stickies')) {
+    await expect(page.locator('.stickies-board')).toBeVisible({ timeout: 20_000 });
+    return;
+  }
   if (await page.locator('.stickies-board').count()) {
     await expect(page.locator('.stickies-board')).toBeVisible();
     return;

@@ -16,6 +16,32 @@ All notable changes to mdnest are documented here.
   server with the same address, and if there is none it prints the
   `mdnest login` command to run. Task board and stickies links are refused,
   because they do not name a note.
+- **Keep a chat open next to your note.** The Stickies drawer is now a side
+  panel with two tabs, **Chat** and **Stickies**. In full-screen Chats, the
+  new **Pin to side panel** button takes you back to the note or board you
+  came from with that chat docked on the right, so you can read and edit the
+  note while you talk. **Expand** in the docked chat opens it full screen
+  again, and Back returns to the note with the chat still docked. The unsent
+  draft and the spot you were reading are kept when you switch tabs, expand
+  or pin. Only the visible chat is checked for new messages, so a hidden tab
+  costs nothing. The chat panel starts at 40% of the window (at most 960px,
+  at least 520px) and can be resized by dragging its edge or with the arrow
+  keys once the edge is focused. Its width, the open tab and the docked chat
+  are remembered in this browser, and a chat you can no longer open falls
+  back to the chat list. A chat docks only when the editor keeps at least
+  400px beside it; on smaller windows and phones Chats opens full screen as
+  before, and no Pin button is shown. Links to a chat still open it full
+  screen. The tabs work with the arrow keys, and Escape closes an open menu
+  or popup first, then the panel. The stickies drawer keeps its own width,
+  now also limited so it never leaves the editor under 400px.
+
+### Fixed
+
+- **"You no longer have access to this chat" shows again.** When someone took
+  you off a private chat you had open, the chat showed a repeating error line
+  and kept asking the server for messages, instead of saying you were removed
+  and stopping. The app's 403 error did not carry its status, so the chat
+  could not tell it apart from other errors.
 
 ### Changed
 

@@ -6173,6 +6173,63 @@ pre:hover .code-copy-btn {
   background: var(--accent-wash-3);
 }
 
+/* Keyboard resize: the handle is focusable, so it shows where focus is. */
+.stickies-resize-handle:focus-visible {
+  background: var(--accent-wash-3);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The panel's body: the stickies list, or the docked chat. A flex column
+   that fills the height, so whichever one is shown scrolls inside it. */
+.side-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Chat and Stickies tabs, in the header where the "Stickies" title was. */
+.side-panel-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-right: auto;
+}
+
+.side-panel-tab {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.side-panel-tab:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.side-panel-tab.active {
+  color: var(--text);
+  background: var(--accent-wash);
+}
+
+.side-panel-tab:focus-visible,
+.stickies-close:focus-visible,
+.stickies-expand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The docked chat brings its own headers; the panel header stays compact. */
+.side-panel-chat .stickies-header {
+  padding: 8px 12px;
+}
+
 .stickies-header {
   display: flex;
   align-items: center;

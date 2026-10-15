@@ -9,7 +9,7 @@ import {
   highlightMentions, mentionsName, participants, mentionQuery, completeMention,
   avatarFor, reactions, gifMarkdown, expandGifRefs, initialOf,
   pinKey, parsePins, togglePin, chatsForTab, MAX_CHAT_PINS_LENGTH,
-  roleFor, chatDeleteConsequences, loadDraft, saveDraft,
+  roleFor, chatDeleteConsequences, loadDraft, saveDraft, rememberScroll, recallScroll,
 } from '../chat.js';
 import { copyPlainText } from '../mermaid-text.js';
 import { mdnestUri } from '../mdnestUri.js';
@@ -576,7 +576,7 @@ function ChatAgentPanel({ chat, serverAlias, onClose }) {
   );
 }
 
-function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, onDialog, onGone }) {
+function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, onDialog, onGone, onUnavailable, action }) {
   const [doc, setDoc] = useState(null); // { title, description, you, owner, canDelete }
   // Set when the chat disappears under you: 'deleted' (404: deleted or
   // moved) or 'removed' (403: taken off a private chat's member list). The
@@ -614,6 +614,9 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
   // Messages from others never move it: they raise a "N new messages" pill
   // instead, and you scroll yourself (or click it).
   const followNext = useRef(true);
+  // Set on the first load only: the spot to return to instead of the bottom
+  // (see rememberScroll). A send still jumps to the bottom.
+  const restoreSpot = useRef(null);
   const [unseen, setUnseen] = useState(0);
   const shownRef = useRef(new Set()); // message numbers already on screen
   const countRef = useRef(0);
@@ -632,6 +635,7 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
     if (reloadNonce === 0) {
       setDoc(null);
       setMessages([]);
+      restoreSpot.current = recallScroll(chat.ns, chat.path);
     }
     setError('');
     countRef.current = 0;
@@ -650,6 +654,10 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
       })
       .catch((e) => {
         if (cancelled) return;
+        // The side panel reopens its chat after a reload. If that chat has
+        // since gone, or you were taken off it, it quietly goes back to the
+        // list rather than reopening on an error.
+        if ((e.status === 404 || e.status === 403) && onUnavailable) { onUnavailable(); return; }
         // Opening a deleted chat says so. A 403 on the FIRST load is a chat
         // you were never let into, which the error line below explains.
         if (e.status === 404) setGone('deleted');
@@ -702,7 +710,11 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
     const el = scrollRef.current;
     if (!el) return;
     if (followNext.current && messages.length) {
-      el.scrollTop = el.scrollHeight;
+      const spot = restoreSpot.current;
+      restoreSpot.current = null;
+      const node = spot?.n != null ? el.querySelector(`[data-n="${spot.n}"]`) : null;
+      if (node) el.scrollTop += node.getBoundingClientRect().top - el.getBoundingClientRect().top + spot.offset;
+      else el.scrollTop = el.scrollHeight;
       followNext.current = false;
       setUnseen(0);
     } else if (el.scrollHeight <= el.clientHeight) {
@@ -714,6 +726,26 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
     const el = scrollRef.current;
     if (el && atBottom(el)) setUnseen(0);
   };
+
+  // Remember the reading spot when this view goes away (a tab switch, Expand,
+  // Pin, another chat), measured once here rather than on every scroll. A
+  // layout-effect cleanup runs while the list is still on the page.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    return () => {
+      if (!el || !el.isConnected) return;
+      if (atBottom(el)) { rememberScroll(chat.ns, chat.path, { n: null }); return; }
+      // The first message still (partly) in view, and how far into it.
+      const top = el.getBoundingClientRect().top;
+      for (const node of el.querySelectorAll('.chat-msg')) {
+        const r = node.getBoundingClientRect();
+        if (r.bottom > top) {
+          rememberScroll(chat.ns, chat.path, { n: node.dataset.n, offset: top - r.top });
+          return;
+        }
+      }
+    };
+  }, [chat.ns, chat.path]);
 
   const showNew = () => {
     const el = scrollRef.current;
@@ -783,7 +815,7 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
           const own = isOwnMessage(m, account, effectiveAs);
           const forMe = !own && mentionsName(m.text, effectiveAs);
           return (
-            <div key={m.n} className={`chat-msg${own ? ' own' : ''}${forMe ? ' mentions-me' : ''}${m.startsGroup ? ' first' : ''}`}>
+            <div key={m.n} data-n={m.n} className={`chat-msg${own ? ' own' : ''}${forMe ? ' mentions-me' : ''}${m.startsGroup ? ' first' : ''}`}>
               {m.startsGroup && (
                 <div className="chat-msg-meta">
                   {(() => {
@@ -861,6 +893,13 @@ function ChatRoom({ chat, account, serverAlias, onOpenNote, onBack, onActivity, 
           <button className="chat-btn" onClick={() => onDialog('agent')} title="How an agent joins this chat">
             <span className="chat-label-long">Connect an agent</span>
             <span className="chat-label-short">Agents</span>
+          </button>
+        )}
+        {action && (
+          <button className={`chat-btn chat-room-action${action.label ? '' : ' chat-btn-icon'}`} onClick={action.onClick}
+            title={action.title} aria-label={action.title} data-testid={action.testId}>
+            {action.icon}
+            {action.label && <span className="chat-label-long">{action.label}</span>}
           </button>
         )}
         <button
@@ -1030,7 +1069,11 @@ function NsPicker({ ns, namespaces, onSelectNs }) {
   );
 }
 
-function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, openChat, onSelectChat, onOpenNote, onDeleteChat, onClose }) {
+// docked: shown in the side panel next to a note. It then uses the one-column
+// layout phones get (the list OR the conversation, with Back), since the panel
+// is too narrow for both. roomAction: one extra button in the conversation's
+// header, Pin to side panel here or Expand in the panel.
+function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, docked, roomAction, openChat, onSelectChat, onOpenNote, onDeleteChat, onClose }) {
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1097,14 +1140,15 @@ function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, 
     return () => clearInterval(id);
   }, [visible, refresh]);
 
-  const showList = !isMobile || !openChat;
+  const compact = isMobile || docked;
+  const showList = !compact || !openChat;
   const showRoom = !!openChat;
-  const narrow = collapsed && !isMobile;
+  const narrow = collapsed && !compact;
   const pinnedHere = chatsForTab(chats, pins || [], 'pinned');
   const railChats = tab === 'pinned' && pinnedHere.length ? pinnedHere : chats;
 
   return (
-    <div className="chat-panel">
+    <div className={`chat-panel${docked ? ' docked' : ''}`}>
       {showList && narrow && (
         // Collapsed: a slim strip with the way back out and one initial per
         // chat (the Pinned tab's chats when you are on it), unread marked.
@@ -1136,9 +1180,9 @@ function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, 
             {/* Phone: the app bar already says "Chats", so this row is the
                 way back plus the count, laid out like the task board's
                 header (← on the left). Desktop keeps the title and ✕. */}
-            {isMobile ? (
+            {compact ? (
               <>
-                <button className="chat-btn chat-back" onClick={onClose} title="Back to where you were" aria-label="Leave chats">&#8592;</button>
+                {onClose && <button className="chat-btn chat-back" onClick={onClose} title="Back to where you were" aria-label="Leave chats">&#8592;</button>}
                 <NsPicker ns={ns} namespaces={namespaces} onSelectNs={onSelectNs} />
                 <span className="chat-list-count">{loading ? '' : `${chats.length} chat${chats.length === 1 ? '' : 's'}`}</span>
               </>
@@ -1150,7 +1194,7 @@ function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, 
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
               </button>
               <button className="chat-btn chat-btn-primary" onClick={() => setCreating((v) => !v)}>+ New</button>
-              {!isMobile && (
+              {!compact && (
                 <button className="chat-btn chat-btn-icon chat-collapse" onClick={toggleCollapsed}
                   title="Hide the chat list" aria-label="Hide the chat list" aria-expanded="true">&#171;</button>
               )}
@@ -1159,7 +1203,7 @@ function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, 
             </div>
             {/* Desktop: the workspace gets its own full-width row, so the
                 title and the buttons share one line instead of wrapping. */}
-            {!isMobile && (
+            {!compact && (
               <div className="chat-list-scope">
                 <span className="chat-list-in">in</span>
                 <NsPicker ns={ns} namespaces={namespaces} onSelectNs={onSelectNs} />
@@ -1211,7 +1255,9 @@ function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, 
           account={account}
           serverAlias={serverAlias}
           onOpenNote={onOpenNote}
-          onBack={isMobile ? () => onSelectChat(null) : null}
+          onBack={compact ? () => onSelectChat(null) : null}
+          onUnavailable={docked ? () => onSelectChat(null) : null}
+          action={roomAction}
           onActivity={refresh}
           onDialog={(kind, extra) => {
             if (kind === 'delete' && !onDeleteChat) return;
@@ -1220,7 +1266,7 @@ function ChatView({ ns, namespaces, onSelectNs, account, serverAlias, isMobile, 
           }}
           onGone={() => { onSelectChat(null); refresh(); }}
         />
-      ) : !isMobile && (
+      ) : !compact && (
         <section className="chat-room chat-room-placeholder">
           <div className="chat-empty">
             Pick a chat, or start one with <b>+ New</b>. A chat is an ordinary note, so people here and agents using
