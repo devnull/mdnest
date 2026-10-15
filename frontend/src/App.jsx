@@ -154,8 +154,32 @@ function parseHash() {
   return parseRoute(window.location.hash);
 }
 
+// The hash the app last wrote or acted on. When the address bar holds
+// anything else, the user (a pasted link, back/forward) or the test harness
+// changed it and its hashchange event has not been handled yet: the browser
+// updates location.hash at once but dispatches hashchange later. Writing the
+// app's state over it in that gap threw the request away, so a link opened
+// as the app finished loading landed on the bare namespace instead.
+// null: not read yet, nothing to protect.
+let appHash = null;
+
+function writeRoute(url) {
+  window.history.replaceState(null, '', url);
+  appHash = window.location.hash;
+}
+
+// adoptHash records that the current address has been acted on.
+function adoptHash() {
+  appHash = window.location.hash;
+}
+
+// hashIsPending: the address changed and the app has not handled it yet.
+function hashIsPending() {
+  return appHash !== null && window.location.hash !== appHash;
+}
+
 function setHash(ns, path, stickiesBoard, taskBoard) {
-  window.history.replaceState(null, '', formatRoute({ ns, path, stickies: stickiesBoard, board: taskBoard }));
+  writeRoute(formatRoute({ ns, path, stickies: stickiesBoard, board: taskBoard }));
 }
 
 // decodeJwtSub returns the `sub` claim of the JWT (the username), without
@@ -587,7 +611,8 @@ function App() {
       .then((cfg) => {
         setAppConfig(cfg);
         if (cfg?.userProvider === 'firebase' && cfg?.firebaseWebConfig) {
-          initFirebase(cfg.firebaseWebConfig);
+          // Loads the SDK; a failure shows on the sign-in button instead.
+          initFirebase(cfg.firebaseWebConfig).catch(() => {});
         }
       })
       .catch(() => setAppConfig({ authMode: 'single' }));
@@ -988,6 +1013,7 @@ function App() {
 
       const nsList = await loadNamespaces();
       const { ns: hashNs, path: hashPath, stickies: hashStickies, board: hashBoard, chats: hashChats, chat: hashChat, heading: hashHeading } = parseHash();
+      adoptHash();
       if (hashHeading) pendingHeadingRef.current = hashHeading;
       // Opened (or refreshed) on the chats view, possibly with one chat open.
       if (hashChats) {
@@ -1072,7 +1098,10 @@ function App() {
       }
     });
 
-    if (!currentPath) {
+    // Not over a link that arrived while the namespace loaded (hashIsPending):
+    // that write was what turned a link opened right after sign-in into the
+    // bare namespace.
+    if (!currentPath && !hashIsPending()) {
       setHash(selectedNs, null);
     }
   }, [authenticated, selectedNs, initialized]);
@@ -1180,14 +1209,14 @@ function App() {
 
   // Update URL hash
   useEffect(() => {
-    if (hashNavPending.current) return;
+    if (hashNavPending.current || hashIsPending()) return;
     if (stickiesView === 'board') {
       setHash(null, null, true);
       return;
     }
     // Same rule as the board: until config loads, keep a chats deep link.
     if (chatsOpen && (!appConfig || chatEnabled)) {
-      window.history.replaceState(null, '', formatRoute({ chats: true, chat: openChat }));
+      writeRoute(formatRoute({ chats: true, chat: openChat }));
       return;
     }
     if (selectedNs) {
@@ -1201,6 +1230,7 @@ function App() {
   useEffect(() => {
     const onHashChange = () => {
       const { ns, path, stickies, board, chats, chat, heading } = parseHash();
+      adoptHash();
       if (stickies) {
         setStickiesView('board');
         return; // the board route says nothing about which note is open
