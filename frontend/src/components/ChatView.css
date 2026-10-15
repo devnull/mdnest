@@ -79,6 +79,7 @@
 .chat-btn:disabled { opacity: 0.5; cursor: default; }
 .chat-btn.active { border-color: var(--accent); color: var(--accent); }
 .chat-btn-icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; }
+.chat-room-action { display: inline-flex; align-items: center; gap: 6px; }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
 .chat-refresh.spinning svg { animation: chat-spin 0.8s linear infinite; }
 .chat-delete:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
@@ -605,6 +606,14 @@
 }
 .chat-error { color: var(--danger); font-size: 0.82rem; }
 .chat-room-error { padding: 4px 14px; }
+
+/* Docked in the side panel: one column, like a phone, and the shorter
+   button labels so the conversation's header fits the panel's width. */
+.chat-panel.docked .chat-list { width: 100%; flex: 1 1 auto; border-right: none; }
+.chat-panel.docked .chat-label-long { display: none; }
+.chat-panel.docked .chat-label-short { display: inline; }
+.chat-panel.docked .chat-messages { padding: 12px; }
+.chat-panel.docked .chat-msg { max-width: 92%; }
 
 @media (max-width: 768px) {
   .chat-label-long { display: none; }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, formatRoute } from '../hashRoute';
+import { parseRoute, formatRoute, noteLink } from '../hashRoute';
 
 describe('hash routes', () => {
   it('a note round-trips, including characters that need encoding', () => {
@@ -36,4 +36,28 @@ describe('hash routes', () => {
   it('a namespace literally called "chats" is still a note route', () => {
     expect(parseRoute('#chats/x.md')).toEqual({ ns: 'chats', path: 'x.md', stickies: false, board: false });
   });
+});
+
+describe('browser link (Copy browser link)', () => {
+  const base = 'https://notes.example.com/sub/';
+  const cases = [
+    ['team', 'Specs/api.md'],
+    ['my notes', 'a b/19 Jun 2026.md'],
+    ['ns', 'C# tips/#1 #hash.md'],
+    ['ns', '100% done/50%25.md'],
+    ['ns', 'why?/a?b=c&d.md'],
+    ['équipe', 'Réunions/会议 …/naïve 😀.md'],
+  ];
+  for (const [ns, path] of cases) {
+    it(`round-trips ${ns}/${path}`, () => {
+      const link = noteLink(base, ns, path);
+      // The base is kept as is, and the rest is a hash the app parses back.
+      expect(link.startsWith(base + '#')).toBe(true);
+      const hash = link.slice(base.length);
+      expect(parseRoute(hash)).toEqual({ ns, path, stickies: false, board: false });
+      // A URL parser sees the same hash: no raw "#" or "?" leaks out of a name.
+      expect(new URL(link).hash).toBe(hash);
+      expect(new URL(link).search).toBe('');
+    });
+  }
 });

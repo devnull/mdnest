@@ -2957,20 +2957,43 @@ pre:hover .code-copy-btn {
 
 /* ===== Sidebar action buttons ===== */
 .sidebar-actions {
-  display: flex;
-  gap: 6px;
-  padding: 6px 12px;
+  /* The row measures the sidebar, not the window: the sidebar is resizable
+     (180-600px), so a media query would pick the wrong layout. */
+  container-type: inline-size;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
+/* Equal columns, one per button. Four labels do not fit one row at the
+   default 260px sidebar with room to breathe, so four go two by two until
+   the sidebar is wide enough; a very narrow sidebar falls back to as many
+   columns as fit, never a label cut in two. */
+.sidebar-actions-row {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(5.25rem, 1fr));
+}
+.sidebar-actions-row[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.sidebar-actions-row[data-count="2"],
+.sidebar-actions-row[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container (min-width: 14.5rem) {
+  .sidebar-actions-row[data-count="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (min-width: 21rem) {
+  .sidebar-actions-row[data-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 .sidebar-action-btn {
-  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--surface-2);
   color: var(--text);
   border: none;
-  padding: 5px 0;
-  border-radius: 5px;
+  padding: 6px 8px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 0.8rem;
   font-weight: 500;
@@ -5731,6 +5754,9 @@ pre:hover .code-copy-btn {
 .marp-theme-name-field input { background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--text); padding:6px 8px; }
 .marp-theme-css { width:100%; box-sizing:border-box; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.78rem; line-height:1.45; resize:vertical; }
 .marp-theme-actions { display:flex; justify-content:flex-end; }
+.marp-theme-parts { display:flex; gap:4px; }
+.marp-theme-parts button { background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:0.8rem; cursor:pointer; }
+.marp-theme-parts button.active { background:var(--accent); color:var(--text-inverse); border-color:var(--accent); }
 
 /* ===== Access "Groups" admin tab ===== */
 /* Separate the create form from the intro above and the group list below. */
@@ -6145,6 +6171,63 @@ pre:hover .code-copy-btn {
 .stickies-resize-handle:hover,
 .stickies-resize-handle:active {
   background: var(--accent-wash-3);
+}
+
+/* Keyboard resize: the handle is focusable, so it shows where focus is. */
+.stickies-resize-handle:focus-visible {
+  background: var(--accent-wash-3);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The panel's body: the stickies list, or the docked chat. A flex column
+   that fills the height, so whichever one is shown scrolls inside it. */
+.side-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Chat and Stickies tabs, in the header where the "Stickies" title was. */
+.side-panel-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-right: auto;
+}
+
+.side-panel-tab {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.side-panel-tab:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.side-panel-tab.active {
+  color: var(--text);
+  background: var(--accent-wash);
+}
+
+.side-panel-tab:focus-visible,
+.stickies-close:focus-visible,
+.stickies-expand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The docked chat brings its own headers; the panel header stays compact. */
+.side-panel-chat .stickies-header {
+  padding: 8px 12px;
 }
 
 .stickies-header {
@@ -7075,4 +7158,142 @@ pre:hover .code-copy-btn {
   color: var(--text-secondary);
   padding: 2px 8px;
   cursor: pointer;
+}
+
+/* "+ Slides": new Marp deck dialog. */
+/* The dialog never outgrows the screen: the head and the Cancel / Create row
+   stay put and only the body scrolls, so Create is reachable on a phone
+   without scrolling past the whole form. */
+.modal.newdeck-modal {
+  display: flex;
+  flex-direction: column;
+  width: 960px;
+  max-width: 95vw;
+  max-height: min(90vh, calc(100dvh - 2rem));
+  overflow: hidden;
+}
+.newdeck-head { flex-shrink: 0; }
+.newdeck-where {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: -0.5rem 0 0.8rem;
+  overflow-wrap: anywhere;
+}
+/* Form and preview side by side when there is room, stacked otherwise. */
+.newdeck-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-content: start;
+}
+@media (min-width: 900px) {
+  .newdeck-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 1.25rem; }
+  .newdeck-preview { position: sticky; top: 0; }
+}
+.newdeck-modal .modal-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-top: 0.9rem;
+}
+.newdeck-modal .modal-error { flex-shrink: 0; margin: 0.6rem 0 0; }
+.newdeck-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem 0.75rem;
+  align-content: start;
+}
+.newdeck-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.newdeck-wide { grid-column: 1 / -1; }
+.newdeck-slides-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.newdeck-slides-bulk { display: inline-flex; gap: 0.6rem; }
+.newdeck-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.newdeck-link:disabled { color: var(--text-muted); cursor: default; }
+/* Even columns: every cell the same width, names cut with an ellipsis (the
+   full name and the slide's class are in the tooltip). */
+.newdeck-slides {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.35rem 0.9rem;
+  max-height: 9.5rem;
+  overflow-y: auto;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.newdeck-slides .newdeck-check { min-width: 0; }
+.newdeck-slide-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.newdeck-paginate { align-self: end; padding-bottom: 0.45rem; }
+.newdeck-empty {
+  min-height: 10rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.newdeck-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.newdeck-check input { flex-shrink: 0; margin: 0; }
+/* The preview is the deck viewer. Its frame fills the box width in the
+   deck's own shape (MarpDeck sets --deck-ratio), and the chrome around it
+   follows the app theme; only the slide itself keeps the deck's colours. */
+.newdeck-preview {
+  align-self: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.newdeck-preview .editor-loading { min-height: 10rem; }
+.newdeck-preview .marp-deck { height: auto; background: var(--surface); }
+.newdeck-preview .marp-deck-stage { flex: none; display: block; padding: 0.75rem; }
+.newdeck-preview .marp-deck-frame {
+  display: block;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-deep);
+  box-shadow: none;
+}
+.newdeck-preview .marp-deck-controls {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.newdeck-preview .marp-deck-controls button {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.newdeck-preview .marp-deck-controls button:hover:not(:disabled) { background: var(--surface-3); }
+.newdeck-preview .marp-deck-counter { color: var(--text-secondary); }
+@media (max-width: 560px) {
+  .modal.newdeck-modal { padding: 1rem; max-width: calc(100vw - 1rem); }
+  .newdeck-grid { grid-template-columns: minmax(0, 1fr); }
 }

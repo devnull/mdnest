@@ -4,6 +4,100 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.8: New slide decks from templates, a chat next to your note, and a much smaller first load
+
+"+ Slides" makes a new deck from your theme's slide templates, a chat can stay
+open beside the note you are working on, and the app's first download is about
+8 times smaller. Right-click a note to copy its browser link, and the CLI reads
+those links. Thanks to [@ecthelion77](https://github.com/ecthelion77) (Olivier
+Gintrand) for the slide templates work.
+
+### Added
+
+- **"+ Slides" builds a new deck from your theme's slide templates**
+  ([#141](https://github.com/mahsanamin/mdnest/pull/141), by
+  [@ecthelion77](https://github.com/ecthelion77)). With `ENABLE_MARP` on,
+  "+ Slides" in the sidebar (and **New slides** in a folder's menu) opens a
+  dialog: name, title, theme, the look of the whole deck (for example light
+  or dark), the slides to include, size (16:9 or 4:3), slide numbers, header
+  and footer, with a live preview. Create writes an ordinary Markdown note
+  with the Marp front matter filled in. An admin can give each catalog theme
+  a templates deck in **Admin > Marp Themes > Slide templates**, one slide
+  per kind (title, agenda, metrics, closing...), and those are the slides the
+  dialog offers. Themes without templates offer a title slide and a content
+  slide. For agents, the MCP server has a new `list_marp_themes` tool, and
+  `create_marp` takes `class`, `size`, `header`, `footer` and `templates`.
+  On a server with a theme catalog, `create_marp` now refuses to create a
+  deck without a theme, or with a theme or template that does not exist,
+  and names the themes so the agent can ask you. Before, it silently used
+  `default`. Without a catalog nothing changes. The deck viewer also stops
+  cropping 4:3 decks.
+- **Copy browser link, and the CLI reads browser links.** Right-click a note
+  and choose **Copy browser link** to get the same link the address bar shows
+  when the note is open. The `mdnest` CLI now accepts that link wherever it
+  takes a path (`mdnest read 'https://notes.example.com/#team/Specs/api.md'`),
+  so an agent given a link from a chat can read the note. It uses the saved
+  server with the same address, and if there is none it prints the
+  `mdnest login` command to run. Task board and stickies links are refused,
+  because they do not name a note.
+- **Keep a chat open next to your note.** The Stickies drawer is now a side
+  panel with two tabs, **Chat** and **Stickies**. In full-screen Chats, the
+  new **Pin to side panel** button takes you back to the note or board you
+  came from with that chat docked on the right, so you can read and edit the
+  note while you talk. **Expand** in the docked chat opens it full screen
+  again, and Back returns to the note with the chat still docked. The unsent
+  draft and the spot you were reading are kept when you switch tabs, expand
+  or pin. Only the visible chat is checked for new messages, so a hidden tab
+  costs nothing. The chat panel starts at 40% of the window (at most 960px,
+  at least 520px) and can be resized by dragging its edge or with the arrow
+  keys once the edge is focused. Its width, the open tab and the docked chat
+  are remembered in this browser, and a chat you can no longer open falls
+  back to the chat list. A chat docks only when the editor keeps at least
+  400px beside it; on smaller windows and phones Chats opens full screen as
+  before, and no Pin button is shown. Links to a chat still open it full
+  screen. The tabs work with the arrow keys, and Escape closes an open menu
+  or popup first, then the panel. The stickies drawer keeps its own width,
+  now also limited so it never leaves the editor under 400px.
+
+### Changed
+
+- **"+ Slides" polish** (follow-up to
+  [#141](https://github.com/mahsanamin/mdnest/pull/141)). On a desktop a
+  Marp deck, new or existing, opens in split view, with the text on the left
+  and the slides on the right, unless you picked another view for that deck
+  before. A view picked on a deck is kept for that deck only, so other notes
+  keep your view mode. In split view the slide shown follows the cursor: type
+  or click in a slide and that slide is shown with the change, while scrolling
+  alone still moves through the deck and the deck's own arrows hold until the
+  cursor moves again. Before, the slide followed only the scroll position, so
+  typing could change a slide that was not on screen. In the dialog the
+  preview fills its box in the deck's own shape (16:9 or 4:3) and follows the
+  light theme, the form and preview sit side by side on a wide screen, and on
+  a phone Cancel and Create stay on screen. The sidebar's create buttons sit
+  two by two when all four are on, instead of squeezing into one row. Typing
+  in the dialog no longer redraws the preview on every key, and the deck
+  viewer reuses its Marp engine, which halves the cost of a redraw.
+
+- **The first page load is about 8 times smaller.** The app's entry
+  bundle went from 4.4 MB (1.41 MB gzipped) to 0.56 MB (166 KB gzipped). The
+  Marp slide engine and the Firebase sign-in SDK were in it for everyone,
+  pulled in by the admin panel's theme cache and by the Firebase setup code.
+  Both now load only when a deck is opened or a Firebase-mode server asks
+  for sign-in. A test fails if either comes back into the entry bundle.
+
+### Fixed
+
+- **"You no longer have access to this chat" shows again.** When someone took
+  you off a private chat you had open, the chat showed a repeating error line
+  and kept asking the server for messages, instead of saying you were removed
+  and stopping. The app's 403 error did not carry its status, so the chat
+  could not tell it apart from other errors.
+- **A link opened while the app finishes loading opens the note.** A link
+  put in the address bar right after sign-in, or while the app updated its
+  own state, could land on the bare namespace ("No file selected"): the
+  browser updates the address at once but reports the change a moment later,
+  and the app wrote its own route over the link in between.
+
 ## v4.8.7: Personal Git backup is back, and images without a title open again
 
 You can manage the Git backup of your personal namespace from Settings again,

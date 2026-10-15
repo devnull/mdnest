@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { parseRoute, formatRoute } from './hashRoute';
+import { parseRoute, formatRoute, noteLink } from './hashRoute';
 import { chatPathFor, isChatDoc, chatDeleteWarning } from './chat.js';
 import Login from './components/Login.jsx';
 import LoginFirebase from './components/LoginFirebase.jsx';
@@ -30,6 +30,20 @@ const ExcalidrawEditor = lazy(() => loadWithRetry(() => import('./components/Exc
 // Lazy chats view, off by default (ENABLE_CHAT): notes-only installs never
 // download it.
 const ChatView = lazy(() => loadWithRetry(() => import('./components/ChatView.jsx')));
+// The two buttons that move a chat between full screen and the side panel.
+// Defined here, not in ChatView, so the chat chunk stays free of App's
+// layout decisions: ChatView just renders whatever action it is handed.
+const PIN_SIDE_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" /><line x1="14" y1="4" x2="14" y2="20" />
+  </svg>
+);
+const EXPAND_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+    <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+);
 import Preview from './components/Preview.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Settings from './components/Settings.jsx';
@@ -39,11 +53,13 @@ import HeadingLinks from './components/HeadingLinks.jsx';
 import { findHeading } from './headingLink.js';
 import CommentSidebar from './components/CommentSidebar.jsx';
 import StickiesPanel from './components/StickiesPanel.jsx';
+import { canDockChat, chatPanelBounds, stickiesPanelBounds, defaultChatPanelWidth, clampWidth } from './sidePanel.js';
 import StickiesBoard from './components/StickiesBoard.jsx';
 import ShareDialog from './components/ShareDialog.jsx';
 import HistoryModal from './components/HistoryModal.jsx';
 import AttributionModal from './components/AttributionModal.jsx';
 import MoveToModal from './components/MoveToModal.jsx';
+import NewDeckModal from './components/NewDeckModal.jsx';
 import PasteModal from './components/PasteModal.jsx';
 import { copyPlainText } from './mermaid-text.js';
 import EmptyNamespaces from './components/EmptyNamespaces';
@@ -153,8 +169,32 @@ function parseHash() {
   return parseRoute(window.location.hash);
 }
 
+// The hash the app last wrote or acted on. When the address bar holds
+// anything else, the user (a pasted link, back/forward) or the test harness
+// changed it and its hashchange event has not been handled yet: the browser
+// updates location.hash at once but dispatches hashchange later. Writing the
+// app's state over it in that gap threw the request away, so a link opened
+// as the app finished loading landed on the bare namespace instead.
+// null: not read yet, nothing to protect.
+let appHash = null;
+
+function writeRoute(url) {
+  window.history.replaceState(null, '', url);
+  appHash = window.location.hash;
+}
+
+// adoptHash records that the current address has been acted on.
+function adoptHash() {
+  appHash = window.location.hash;
+}
+
+// hashIsPending: the address changed and the app has not handled it yet.
+function hashIsPending() {
+  return appHash !== null && window.location.hash !== appHash;
+}
+
 function setHash(ns, path, stickiesBoard, taskBoard) {
-  window.history.replaceState(null, '', formatRoute({ ns, path, stickies: stickiesBoard, board: taskBoard }));
+  writeRoute(formatRoute({ ns, path, stickies: stickiesBoard, board: taskBoard }));
 }
 
 // decodeJwtSub returns the `sub` claim of the JWT (the username), without
@@ -256,14 +296,18 @@ function App() {
     return 'editor';
   });
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  // The side panel's chat width is clamped against it, on every resize and
+  // not only on drag, so a window made narrower never ends up with the panel
+  // covering the editor.
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
 
   // Track screen width changes for responsive rendering
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    const onResize = () => { setIsMobile(window.innerWidth <= 768); setViewportWidth(window.innerWidth); };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem('mdnest_view_mode') || 'editor');
+  const [savedViewMode, setViewMode] = useState(() => localStorage.getItem('mdnest_view_mode') || 'editor');
   const [editorMode, setEditorMode] = useState('live');
   const [editorModeReady, setEditorModeReady] = useState(false);
   // When the Live editor throws on a specific file, remember that path
@@ -313,18 +357,37 @@ function App() {
   // Personal sticky board. Not per-note and not per-namespace, so it lives at
   // the top of the app and is loaded once per session.
   const [stickies, setStickies] = useState([]);
-  // 'closed' | 'panel' | 'board'. Three states rather than two booleans: the
-  // drawer and the full-screen board are two views of one thing, and a pair of
-  // flags makes "both open at once" representable when it never is.
-  const [stickiesView, setStickiesView] = useState(() => (
-    // The DRAWER's open/closed state is remembered per browser, the way the
-    // view mode and the sidebar width already are. It is not in the URL —
-    // only the full-screen board gets a route, because the drawer sits on top
-    // of a note and a shared link should not force someone's stickies open.
-    // But it is a panel the user chose to have open, and a refresh throwing it
-    // away is the same annoyance as a refresh forgetting Basic vs Live.
-    localStorage.getItem('mdnest_stickies_open') === '1' ? 'panel' : 'closed'
-  ));
+  // The right-edge side panel and the sticky board, as ONE value:
+  // 'closed' | 'stickies' | 'chat' (the panel, on that tab) | 'board' (the
+  // full-screen sticky board). One value rather than several booleans: the
+  // panel shows one tab at a time and the board replaces the panel, and a set
+  // of flags would make "two of them open at once" representable when it
+  // never is.
+  const [sidePanel, setSidePanel] = useState(() => {
+    // The panel's open/closed state and its tab are remembered per browser,
+    // the way the view mode and the sidebar width already are. Not in the
+    // URL: only the full-screen board gets a route, because the panel sits
+    // beside a note and a shared link should not force someone's stickies or
+    // chat open. The key keeps its old name so an open drawer stays open
+    // across the upgrade.
+    if (localStorage.getItem('mdnest_stickies_open') !== '1') return 'closed';
+    return localStorage.getItem('mdnest_side_panel_tab') === 'chat' ? 'chat' : 'stickies';
+  });
+  // The chat docked in the panel ({ns, path} | null = the chat list), kept
+  // apart from openChat (the full-screen one) so expanding and pinning are
+  // explicit moves between the two. Remembered so a reload reopens it; the
+  // chat itself checks it is still readable and falls back to the list.
+  const [dockedChat, setDockedChat] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('mdnest_docked_chat') || 'null');
+      return v && typeof v.ns === 'string' && typeof v.path === 'string' ? { ns: v.ns, path: v.path } : null;
+    } catch { return null; }
+  });
+  const [dockedNs, setDockedNs] = useState(null); // the docked list's workspace
+  const [chatPanelWidth, setChatPanelWidth] = useState(() => {
+    const v = parseInt(localStorage.getItem('mdnest_chat_panel_width'), 10);
+    return Number.isFinite(v) ? v : null; // null = the default, min(40vw, 960px)
+  });
   const [stickySaveState, setStickySaveState] = useState('idle'); // idle | saving | error
   // 'loading' | 'ready' | 'error'. Load state is tracked, not collapsed into
   // an empty array: the board is written back WHOLE, so "we could not read
@@ -412,6 +475,28 @@ function App() {
   // `marp: true` is shown as a slide deck in the Live view instead of the editor.
   const marpEnabled = !!appConfig?.marp;
   const marpActive = marpEnabled && isMarpDoc(content);
+  // On a desktop a deck opens in split view (text left, slides right) unless
+  // a view was picked for that file before; a pick on a deck is kept with the
+  // file (mdnest_file_prefs), not as the app-wide mode, so other notes and the
+  // phone layout are unaffected.
+  const [fileView, setFileView] = useState(null); // { ns, path, mode }
+  useEffect(() => {
+    const mode = getFilePrefs(selectedNs, currentPath)?.viewMode;
+    setFileView(mode ? { ns: selectedNs, path: currentPath, mode } : null);
+  }, [selectedNs, currentPath, getFilePrefs]);
+  const deckViewMode = marpActive && !isMobile
+    ? ((fileView && fileView.ns === selectedNs && fileView.path === currentPath && fileView.mode) || 'split')
+    : null;
+  const viewMode = deckViewMode || savedViewMode;
+  const chooseViewMode = useCallback((mode) => {
+    if (deckViewMode) {
+      setFilePrefs(selectedNs, currentPath, { viewMode: mode });
+      setFileView({ ns: selectedNs, path: currentPath, mode });
+      return;
+    }
+    setViewMode(mode);
+    localStorage.setItem('mdnest_view_mode', mode);
+  }, [deckViewMode, selectedNs, currentPath, setFilePrefs]);
   // Marp decks must never go through the Live/WYSIWYG editor — it reformats the
   // markdown and corrupts the frontmatter and slide breaks. Force Basic (raw)
   // editing for them, regardless of the user's editor-mode preference. A
@@ -435,6 +520,10 @@ function App() {
   // split view. The deck is paginated (not scrollable), so unlike the plain
   // Preview it can't share a scrollTop — we map the ratio to a slide instead.
   const [marpScrollPct, setMarpScrollPct] = useState(0);
+  // The editor line the caret is on, so split view shows the slide being
+  // edited. A new object on every caret move or keystroke (`at`), which is
+  // what tells the deck to leave a slide picked with its own buttons.
+  const [marpCaret, setMarpCaret] = useState(null); // { line, at }
 
   // Live collaboration state
   const [presenceUsers, setPresenceUsers] = useState([]);
@@ -491,6 +580,8 @@ function App() {
   // false on tree rows) and is also available from the context menu on
   // desktop as a more accessible alternative to dragging.
   const [moveModal, setMoveModal] = useState(null);
+  // "+ Slides" dialog: {ns, dir} while open.
+  const [newDeck, setNewDeck] = useState(null);
   // "Paste here" target: {ns, folder}.
   const [pasteModal, setPasteModal] = useState(null);
   // One status line at the bottom for downloads and clipboard copies:
@@ -558,7 +649,8 @@ function App() {
       .then((cfg) => {
         setAppConfig(cfg);
         if (cfg?.userProvider === 'firebase' && cfg?.firebaseWebConfig) {
-          initFirebase(cfg.firebaseWebConfig);
+          // Loads the SDK; a failure shows on the sign-in button instead.
+          initFirebase(cfg.firebaseWebConfig).catch(() => {});
         }
       })
       .catch(() => setAppConfig({ authMode: 'single' }));
@@ -959,6 +1051,7 @@ function App() {
 
       const nsList = await loadNamespaces();
       const { ns: hashNs, path: hashPath, stickies: hashStickies, board: hashBoard, chats: hashChats, chat: hashChat, heading: hashHeading } = parseHash();
+      adoptHash();
       if (hashHeading) pendingHeadingRef.current = hashHeading;
       // Opened (or refreshed) on the chats view, possibly with one chat open.
       if (hashChats) {
@@ -972,7 +1065,7 @@ function App() {
       // Opened straight onto the board. The namespace and last file are still
       // restored underneath, so closing the board lands somewhere sensible
       // rather than on an empty editor.
-      if (hashStickies) setStickiesView('board');
+      if (hashStickies) setSidePanel('board');
       let targetNs = null;
       // A chat link names its chat's namespace; open that workspace so the
       // (namespace-scoped) chat list matches the chat on screen.
@@ -1043,7 +1136,10 @@ function App() {
       }
     });
 
-    if (!currentPath) {
+    // Not over a link that arrived while the namespace loaded (hashIsPending):
+    // that write was what turned a link opened right after sign-in into the
+    // bare namespace.
+    if (!currentPath && !hashIsPending()) {
       setHash(selectedNs, null);
     }
   }, [authenticated, selectedNs, initialized]);
@@ -1130,12 +1226,17 @@ function App() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [authenticated, refreshTree]);
 
-  // Remember the drawer, not the board: the board has a URL, and restoring it
+  // Remember the panel, not the board: the board has a URL, and restoring it
   // from storage as well would let a stale flag fight the address bar.
   useEffect(() => {
-    if (stickiesView === 'board') return;
-    localStorage.setItem('mdnest_stickies_open', stickiesView === 'panel' ? '1' : '0');
-  }, [stickiesView]);
+    if (sidePanel === 'board') return;
+    localStorage.setItem('mdnest_stickies_open', sidePanel === 'closed' ? '0' : '1');
+    if (sidePanel !== 'closed') localStorage.setItem('mdnest_side_panel_tab', sidePanel);
+  }, [sidePanel]);
+  useEffect(() => {
+    if (dockedChat) localStorage.setItem('mdnest_docked_chat', JSON.stringify(dockedChat));
+    else localStorage.removeItem('mdnest_docked_chat');
+  }, [dockedChat]);
 
   // Set while a navigation that came FROM the address bar (back/forward, a
   // pasted link) is still loading its note. The URL already says what the
@@ -1151,14 +1252,14 @@ function App() {
 
   // Update URL hash
   useEffect(() => {
-    if (hashNavPending.current) return;
-    if (stickiesView === 'board') {
+    if (hashNavPending.current || hashIsPending()) return;
+    if (sidePanel === 'board') {
       setHash(null, null, true);
       return;
     }
     // Same rule as the board: until config loads, keep a chats deep link.
     if (chatsOpen && (!appConfig || chatEnabled)) {
-      window.history.replaceState(null, '', formatRoute({ chats: true, chat: openChat }));
+      writeRoute(formatRoute({ chats: true, chat: openChat }));
       return;
     }
     if (selectedNs) {
@@ -1166,14 +1267,15 @@ function App() {
       // enabled; keep the board route rather than rewriting a deep link away.
       setHash(selectedNs, currentPath, false, showTaskBoard && (!appConfig || taskBoardEnabled));
     }
-  }, [selectedNs, currentPath, stickiesView, showTaskBoard, appConfig, taskBoardEnabled, chatsOpen, openChat, chatEnabled]);
+  }, [selectedNs, currentPath, sidePanel, showTaskBoard, appConfig, taskBoardEnabled, chatsOpen, openChat, chatEnabled]);
 
   // Handle browser back/forward
   useEffect(() => {
     const onHashChange = () => {
       const { ns, path, stickies, board, chats, chat, heading } = parseHash();
+      adoptHash();
       if (stickies) {
-        setStickiesView('board');
+        setSidePanel('board');
         return; // the board route says nothing about which note is open
       }
       if (chats) {
@@ -1185,7 +1287,7 @@ function App() {
         return; // the chats route names a chat, not the note underneath
       }
       setChatsOpen(false);
-      setStickiesView((v) => (v === 'board' ? 'closed' : v));
+      setSidePanel((v) => (v === 'board' ? 'closed' : v));
       setShowTaskBoard(board);
       if (ns && ns !== selectedNs) {
         setSelectedNs(ns);
@@ -1437,6 +1539,7 @@ function App() {
     // Close the room only if it is the chat that went: deleting another one
     // from the list's right-click menu must leave the open chat alone.
     setOpenChat((cur) => (cur && cur.ns === ns && cur.path === path ? null : cur));
+    setDockedChat((cur) => (cur && cur.ns === ns && cur.path === path ? null : cur));
     return true;
   }, [selectedNs, currentPath, getLastPath, setLastPath, refreshTree]);
 
@@ -1499,6 +1602,37 @@ function App() {
   const setChatsActive = useCallback((on) => {
     if (on) enterChats(null); else leaveChats();
   }, [enterChats, leaveChats]);
+
+  // The side panel. A chat docks only when there is room for it next to a
+  // usable editor (never on a phone); otherwise Chat stays full screen, and no
+  // Pin button is offered. While full-screen chats are open the docked chat
+  // is not shown, so the same chat is never mounted, and polled, twice.
+  const chatCanDock = chatEnabled && !isMobile && canDockChat(viewportWidth, sidebarWidth);
+  const chatDocked = sidePanel === 'chat' && chatCanDock && !chatsOpen;
+  const panelShown = sidePanel === 'stickies' || chatDocked;
+  const chatBounds = chatPanelBounds(viewportWidth, sidebarWidth);
+  const chatWidth = clampWidth(chatPanelWidth ?? defaultChatPanelWidth(viewportWidth), chatBounds);
+  const stickiesBounds = stickiesPanelBounds(viewportWidth, sidebarWidth);
+  const stickiesWidth = clampWidth(commentWidth, stickiesBounds);
+  const openSidePanel = useCallback((tab) => {
+    setShowComments(false); // comments own the same edge
+    setSidePanel(tab);
+  }, []);
+  // Pin: leave full-screen chats for where you came from, with this chat
+  // docked beside it.
+  const pinChat = useCallback((chat) => {
+    leaveChats();
+    setDockedNs(chat.ns);
+    setDockedChat(chat);
+    openSidePanel('chat');
+  }, [leaveChats, openSidePanel]);
+  // Expand: the docked chat, full screen. The panel stays on its Chat tab,
+  // hidden while chats are open, so Back returns to note + docked chat.
+  const expandChat = useCallback((chat) => { enterChats(chat); }, [enterChats]);
+  const selectDockedChat = useCallback((chat) => {
+    if (chat) setDockedNs(chat.ns);
+    setDockedChat(chat);
+  }, []);
   // The "is this note a chat?" decision, made where a note finishes loading
   // rather than in an effect on `content`: that effect stayed armed when the
   // click reloaded identical text (or the load failed), then fired on the
@@ -1735,6 +1869,12 @@ function App() {
     }
   }, [selectedNs, getTargetDir, refreshTree, openNote]);
 
+  // A new Marp deck goes through a dialog (theme, styles, outline, preview).
+  const doCreateSlides = useCallback((target) => {
+    if (!selectedNs) return;
+    setNewDeck({ ns: selectedNs, dir: getTargetDir(target) });
+  }, [selectedNs, getTargetDir]);
+
   const doCreateFolder = useCallback(async (target) => {
     if (!selectedNs) return;
     const name = prompt('Folder name:');
@@ -1840,6 +1980,7 @@ function App() {
     switch (action) {
       case 'new-note': await doCreateNote(target); break;
       case 'new-drawing': await doCreateDrawing(target); break;
+      case 'new-slides': doCreateSlides(target); break;
       case 'new-folder': await doCreateFolder(target); break;
       case 'delete-file': {
         if (!target || !selectedNs) return;
@@ -1933,6 +2074,14 @@ function App() {
         } catch (e) { alert('Failed to create chat: ' + e.message); }
         break;
       }
+      case 'copy-link': {
+        if (!target?.path || !selectedNs) break;
+        const link = noteLink(window.location.origin + window.location.pathname, selectedNs, target.path);
+        setNotice(copyPlainText(link)
+          ? { kind: 'ok', text: `Copied the browser link to "${target.name || target.path.split('/').pop()}".` }
+          : { kind: 'error', text: 'The browser blocked the clipboard.' });
+        break;
+      }
       case 'copy-path': {
         if (target && selectedNs) copyPlainText(mdnestUri(appConfig?.serverAlias, selectedNs, target.path));
         break;
@@ -1986,7 +2135,7 @@ function App() {
         break;
       }
     }
-  }, [selectedNs, currentPath, refreshTree, doCreateNote, doCreateDrawing, doCreateFolder, getLastPath, setLastPath, enterChats, flushPendingSave, runDownload, copyFileContents]);
+  }, [selectedNs, currentPath, refreshTree, doCreateNote, doCreateDrawing, doCreateSlides, doCreateFolder, getLastPath, setLastPath, enterChats, flushPendingSave, runDownload, copyFileContents]);
 
   const handleTreeDrop = useCallback(async (fromPath, toFolderPath) => {
     if (!selectedNs) return;
@@ -2075,8 +2224,15 @@ function App() {
     const editorEl = findScrollable(editorWrapperRef.current);
     if (!editorEl) return undefined;
     let raf = 0;
+    // A scroll right after the caret moved is the textarea keeping the caret
+    // in view (typing, arrow keys), not the user looking elsewhere, so it
+    // must not take the deck away from the caret's slide.
+    // -Infinity, not 0: performance.now() starts at page load, so 0 would
+    // swallow any scroll in the first 400 ms after opening a deck.
+    let caretAt = -Infinity;
     const update = () => {
       raf = 0;
+      if (performance.now() - caretAt < 400) return;
       const max = editorEl.scrollHeight - editorEl.clientHeight;
       const pct = max > 0 ? editorEl.scrollTop / max : 0;
       setMarpScrollPct((prev) => (Math.abs(prev - pct) < 0.005 ? prev : pct));
@@ -2084,9 +2240,33 @@ function App() {
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
     editorEl.addEventListener('scroll', onScroll, { passive: true });
     update(); // seed the initial slide from the current scroll position
+    // The caret: the plain-text editor is a textarea (Marp decks are always
+    // edited in Basic), so the line is a count of newlines before it.
+    const isTextarea = editorEl.tagName === 'TEXTAREA';
+    let caretRaf = 0;
+    const readCaret = () => {
+      caretRaf = 0;
+      const text = editorEl.value;
+      const end = editorEl.selectionStart;
+      let line = 0;
+      for (let i = text.indexOf('\n'); i !== -1 && i < end; i = text.indexOf('\n', i + 1)) line++;
+      setMarpCaret({ line, at: performance.now() });
+    };
+    // One update per frame however many of these one keystroke fires.
+    const onCaret = () => {
+      caretAt = performance.now();
+      if (!caretRaf) caretRaf = requestAnimationFrame(readCaret);
+    };
+    // Only what a person does. No 'select': the app restores a note's
+    // selection when it opens, and that fires one, which would read as the
+    // user moving the caret and swallow their first scroll.
+    const caretEvents = ['keyup', 'mouseup', 'input'];
+    if (isTextarea) for (const ev of caretEvents) editorEl.addEventListener(ev, onCaret);
     return () => {
       editorEl.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
+      if (isTextarea) for (const ev of caretEvents) editorEl.removeEventListener(ev, onCaret);
+      if (caretRaf) cancelAnimationFrame(caretRaf);
     };
   }, [viewMode, isMobile, marpActive, currentPath, editorMode]);
 
@@ -2212,6 +2392,7 @@ function App() {
         onAdminPanel={isAdmin && isMulti ? () => setShowAdminPanel(true) : null}
         onNewNote={canWrite('') ? () => doCreateNote(null) : null}
         onNewDrawing={excalidrawEnabled && canWrite('') ? () => doCreateDrawing(null) : null}
+        onNewSlides={marpEnabled && canWrite('') ? () => doCreateSlides(null) : null}
         pickedFolder={pickedFolder}
         onPickFolder={setPickedFolder}
         onNewFolder={canWrite('') ? () => doCreateFolder(null) : null}
@@ -2235,8 +2416,10 @@ function App() {
       <div
         className="main"
         style={
-          !isMobile && ((commentsEnabled && showComments && currentPath) || stickiesView === 'panel')
-            ? { marginRight: commentWidth }
+          isMobile ? undefined
+            : commentsEnabled && showComments && currentPath ? { marginRight: commentWidth }
+            : chatDocked ? { marginRight: chatWidth }
+            : panelShown ? { marginRight: stickiesWidth }
             : undefined
         }
       >
@@ -2252,8 +2435,7 @@ function App() {
           onDelete={canWriteCurrent ? handleToolbarDelete : null}
           viewMode={viewMode}
           onViewModeChange={(mode) => {
-            setViewMode(mode);
-            localStorage.setItem('mdnest_view_mode', mode);
+            chooseViewMode(mode);
             // Restore editor mode from user preference when switching to editor-only
             if (mode === 'editor') {
               const saved = localStorage.getItem('mdnest_editor_mode') || 'live';
@@ -2298,17 +2480,19 @@ function App() {
           }}
           onRefresh={handleRefresh}
           commentCount={commentsEnabled ? comments.filter(c => !c.parentId && !c.resolved).length : 0}
-          stickiesOpen={stickiesView !== 'closed'}
+          stickiesOpen={sidePanel === 'stickies' || sidePanel === 'board'}
           onToggleStickies={() => {
             // Two drawers, one strip of screen. Opening either closes the
             // other rather than stacking them — the comment panel already
             // owns this edge, and two overlapping fixed panels is not a
             // layout, it is a bug report.
-            setStickiesView((v) => {
-              if (v === 'closed') setShowComments(false);
-              // The button closes whichever view is open and reopens at the
-              // drawer — it is one toggle, not a cycle through three states.
-              return v === 'closed' ? 'panel' : 'closed';
+            setSidePanel((v) => {
+              if (v === 'stickies' || v === 'board') return 'closed';
+              // Closed, or on the Chat tab: show the stickies. The button
+              // closes whichever sticky view is open and reopens at the
+              // drawer — one toggle, not a cycle through the states.
+              setShowComments(false);
+              return 'stickies';
             });
           }}
           onToggleComments={!commentsEnabled ? null : () => {
@@ -2318,7 +2502,7 @@ function App() {
             // general comments work everywhere, so we no longer force the
             // user out of their current view.
             setShowComments((v) => {
-              if (!v) setStickiesView('closed');
+              if (!v) setSidePanel('closed');
               return !v;
             });
           }}
@@ -2399,6 +2583,13 @@ function App() {
                 onOpenNote={openNoteFromChat}
                 onDeleteChat={deleteChat}
                 onClose={leaveChats}
+                roomAction={chatCanDock && openChat ? {
+                  title: `Pin to side panel, next to ${chatsBackLabel}`,
+                  label: 'Pin to side panel',
+                  testId: 'chat-pin-side',
+                  icon: PIN_SIDE_ICON,
+                  onClick: () => pinChat(openChat),
+                } : null}
               />
             </Suspense>
             </ChunkErrorBoundary>
@@ -2494,10 +2685,7 @@ function App() {
                             onHighlightClick={!commentsEnabled ? null : (commentId) => {
                               setShowComments(true);
                               setHighlightedCommentId(commentId);
-                              if (viewMode === 'preview') {
-                                setViewMode('editor');
-                                localStorage.setItem('mdnest_view_mode', 'editor');
-                              }
+                              if (viewMode === 'preview') chooseViewMode('editor');
                             }}
                           />
                       </Suspense>
@@ -2550,7 +2738,7 @@ function App() {
                   {marpEnabled && isMarpDoc(content) ? (
                     <ChunkErrorBoundary label="the slide renderer" resetKey={`${selectedNs}/${currentPath}`}>
                       <Suspense fallback={<div className="editor-loading">Loading slides…</div>}>
-                        <MarpDeck content={content || ''} title={currentPath} scrollPct={viewMode === 'split' && !isMobile ? marpScrollPct : undefined} />
+                        <MarpDeck content={content || ''} title={currentPath} scrollPct={viewMode === 'split' && !isMobile ? marpScrollPct : undefined} caret={viewMode === 'split' && !isMobile ? marpCaret : undefined} />
                       </Suspense>
                     </ChunkErrorBoundary>
                   ) : (
@@ -2620,6 +2808,18 @@ function App() {
           ns={attributionModal.ns}
           path={attributionModal.path}
           onClose={() => setAttributionModal(null)}
+        />
+      )}
+      {newDeck && (
+        <NewDeckModal
+          namespace={newDeck.ns}
+          dir={newDeck.dir}
+          onClose={() => setNewDeck(null)}
+          onCreated={async (path) => {
+            setNewDeck(null);
+            await refreshTree(undefined, { broadcast: true });
+            openNote(path);
+          }}
         />
       )}
       {moveModal && (
@@ -2694,6 +2894,7 @@ function App() {
         multi={isMulti}
         selectedNs={selectedNs}
         excalidraw={excalidrawEnabled}
+        marp={marpEnabled}
         chat={chatEnabled}
       />
       {showApprovals && approvalsEnabled && (
@@ -2720,25 +2921,67 @@ function App() {
           }}
         />
       )}
-      {stickiesView === 'panel' && (
+      {panelShown && (
         <StickiesPanel
           stickies={stickies}
           onChange={updateStickies}
-          onClose={() => setStickiesView('closed')}
-          onExpand={() => setStickiesView('board')}
+          onClose={() => setSidePanel('closed')}
+          onExpand={() => setSidePanel('board')}
           saveState={stickySaveState}
           loadState={stickiesLoad}
           onRetry={loadStickies}
-          width={!isMobile ? commentWidth : undefined}
-          onWidthChange={!isMobile ? (w) => { setCommentWidth(w); localStorage.setItem('mdnest_comment_width', String(w)); } : undefined}
+          tab={chatDocked ? 'chat' : 'stickies'}
+          onTab={chatCanDock && !chatsOpen ? setSidePanel : null}
+          {...(isMobile ? {} : chatDocked ? {
+            width: chatWidth,
+            minWidth: chatBounds.min,
+            maxWidth: chatBounds.max,
+            onWidthChange: (w) => { setChatPanelWidth(w); localStorage.setItem('mdnest_chat_panel_width', String(w)); },
+          } : {
+            width: stickiesWidth,
+            minWidth: stickiesBounds.min,
+            maxWidth: stickiesBounds.max,
+            onWidthChange: (w) => { setCommentWidth(w); localStorage.setItem('mdnest_comment_width', String(w)); },
+          })}
+          chat={chatDocked && (
+            <ChunkErrorBoundary
+              label="chats"
+              resetKey="docked-chat"
+              onDismiss={() => setSidePanel('stickies')}
+              dismissLabel="Show stickies"
+            >
+            <Suspense fallback={<div className="editor-loading">Loading chats...</div>}>
+              <ChatView
+                docked
+                ns={dockedChat?.ns || dockedNs || selectedNs}
+                namespaces={namespaces}
+                onSelectNs={(n) => { setDockedNs(n); if (dockedChat && dockedChat.ns !== n) setDockedChat(null); }}
+                account={isMulti ? userInfo?.username : null}
+                serverAlias={appConfig?.serverAlias}
+                isMobile={false}
+                openChat={dockedChat}
+                onSelectChat={selectDockedChat}
+                onOpenNote={openNoteIn}
+                onDeleteChat={deleteChat}
+                onClose={null}
+                roomAction={dockedChat ? {
+                  title: 'Expand to full screen',
+                  testId: 'chat-expand',
+                  icon: EXPAND_ICON,
+                  onClick: () => expandChat(dockedChat),
+                } : null}
+              />
+            </Suspense>
+            </ChunkErrorBoundary>
+          )}
         />
       )}
-      {stickiesView === 'board' && (
+      {sidePanel === 'board' && (
         <StickiesBoard
           stickies={stickies}
           onChange={updateStickies}
-          onCollapse={() => setStickiesView('panel')}
-          onClose={() => setStickiesView('closed')}
+          onCollapse={() => setSidePanel('stickies')}
+          onClose={() => setSidePanel('closed')}
           saveState={stickySaveState}
           loadState={stickiesLoad}
           onRetry={loadStickies}

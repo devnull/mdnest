@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-MDNEST_CLI_VERSION="4.8.7"
+MDNEST_CLI_VERSION="4.8.8"
 CONFIG_DIR="${HOME}/.config/mdnest"
 SERVERS_DIR="${CONFIG_DIR}/servers"
 DEFAULT_FILE="${CONFIG_DIR}/default"
@@ -15,11 +15,17 @@ get_server_file() {
   echo "${SERVERS_DIR}/${1}"
 }
 
+# server_field <alias> <key>: one key=value line from a saved server file.
+server_field() {
+  grep "^$2=" "$(get_server_file "$1")" 2>/dev/null | cut -d= -f2-
+  return 0
+}
+
 load_server() {
   local alias="$1"
   if [ -n "$alias" ] && [ -f "$(get_server_file "$alias")" ]; then
-    MDNEST_URL=$(grep '^url=' "$(get_server_file "$alias")" 2>/dev/null | cut -d= -f2-) || MDNEST_URL=""
-    MDNEST_TOKEN=$(grep '^token=' "$(get_server_file "$alias")" 2>/dev/null | cut -d= -f2-) || MDNEST_TOKEN=""
+    MDNEST_URL=$(server_field "$alias" url) || MDNEST_URL=""
+    MDNEST_TOKEN=$(server_field "$alias" token) || MDNEST_TOKEN=""
     CURRENT_ALIAS="$alias"
     return 0
   fi
@@ -200,11 +206,81 @@ require_server() {
   fi
 }
 
+# ─── Browser links ──────────────────────────────────────────────────────────
+# A link copied from the address bar: https://notes.example.com/#ns/path/to/note.md
+# The hash is the web app's route (frontend/src/hashRoute.js), percent-encoded
+# per segment. The server is found by comparing ORIGINS (scheme, host, port)
+# with the url= of each saved server, so the link never picks a server the
+# user has not logged in to.
+
+# url_origin <url>: "scheme://host[:port]", lowercased, without user info and
+# without the scheme's default port. Empty when <url> is not http(s).
+url_origin() {
+  local u="$1" scheme rest host
+  case "$u" in [Hh][Tt][Tt][Pp]://*|[Hh][Tt][Tt][Pp][Ss]://*) ;; *) return 0 ;; esac
+  scheme=$(printf '%s' "${u%%://*}" | tr '[:upper:]' '[:lower:]') || scheme=""
+  rest="${u#*://}"
+  host="${rest%%[/?#]*}"
+  host="${host##*@}"
+  host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]') || host=""
+  if [ "$scheme" = "http" ]; then host="${host%:80}"; else host="${host%:443}"; fi
+  [ -n "$host" ] || return 0
+  printf '%s://%s' "$scheme" "$host"
+  return 0
+}
+
+# browser_link_ref <url>: sets BROWSER_ALIAS (the saved server with the same
+# origin) and BROWSER_REF ("ns/path", still percent-encoded, or "" for the
+# server alone), and BROWSER_ORIGIN. Returns 0 on success, 2 when the route is
+# not a note (task board, stickies), 3 when no saved server has this origin.
+browser_link_ref() {
+  local url="$1" origin hash="" f alias def="" candidates=""
+  BROWSER_ALIAS="" BROWSER_REF="" BROWSER_ORIGIN=""
+  origin=$(url_origin "$url") || origin=""
+  BROWSER_ORIGIN="$origin"
+  [ -n "$origin" ] || return 3
+  [[ "$url" == *'#'* ]] && hash="${url#*#}"
+  hash="${hash#/}"
+  # Routes starting with "!" are views, not notes. A chat route names the
+  # chat's own note, so it is read like any other note.
+  case "$hash" in
+    '!chats/'*) hash="${hash#!chats/}" ;;
+    '!'*) return 2 ;;
+  esac
+  # A second raw "#" starts a heading ("#ns/a.md#Setup"); a "#" in a name is %23.
+  hash="${hash%%#*}"
+  # The default server first, so a server saved twice resolves the way a bare
+  # ns/path would; then the rest in name order.
+  [ -f "$DEFAULT_FILE" ] && { def=$(cat "$DEFAULT_FILE" 2>/dev/null) || def=""; }
+  [ -n "$def" ] && [ -f "$(get_server_file "$def")" ] && candidates="$def"
+  if [ -d "$SERVERS_DIR" ]; then
+    for f in "$SERVERS_DIR"/*; do
+      [ -f "$f" ] || continue
+      alias="${f##*/}"
+      [ "$alias" = "$def" ] || candidates="$candidates${candidates:+$'\n'}$alias"
+    done
+  fi
+  while IFS= read -r alias; do
+    [ -n "$alias" ] || continue
+    local saved
+    saved=$(server_field "$alias" url) || saved=""
+    saved=$(url_origin "$saved") || saved=""
+    if [ -n "$saved" ] && [ "$saved" = "$origin" ]; then
+      BROWSER_ALIAS="$alias"
+      BROWSER_REF="$hash"
+      return 0
+    fi
+  done <<< "$candidates"
+  return 3
+}
+
 # ─── Path parser ────────────────────────────────────────────────────────────
 # Parses: @alias/namespace/path/to/file.md
 # Or:     namespace/path/to/file.md (uses default server)
 # Or:     @alias (just server)
 # Or:     @alias/namespace (server + namespace)
+# Or:     mdnest://@alias/ns/path (percent-encoded, from "Copy path for CLI")
+# Or:     https://host/#ns/path (percent-encoded, from the address bar)
 
 parse_path() {
   local input="$1"
@@ -219,6 +295,19 @@ parse_path() {
   local _decode=0
   if [[ "$input" == mdnest://* ]]; then
     input="${input#mdnest://}"
+    _decode=1
+  elif [[ "$input" == [Hh][Tt][Tt][Pp]://* || "$input" == [Hh][Tt][Tt][Pp][Ss]://* ]]; then
+    local _rc=0
+    browser_link_ref "$input" || _rc=$?
+    if [ "$_rc" = "2" ]; then
+      echo "That link opens a view (task board or stickies), not a note. Open the note in the browser and copy that link." >&2
+      exit 1
+    elif [ "$_rc" != "0" ]; then
+      local _o="${BROWSER_ORIGIN:-$input}"
+      echo "No server registered for ${_o}. Run: mdnest login ${_o} mdnest_yourtoken" >&2
+      exit 1
+    fi
+    input="@${BROWSER_ALIAS}${BROWSER_REF:+/$BROWSER_REF}"
     _decode=1
   fi
 
@@ -2390,12 +2479,18 @@ approval_never_remote() {
 }
 
 # approval_chat_ref <target>: turns a chat target ("@alias/ns/path",
-# "'@alias/ns/path'", "mdnest://...", or "ns/path" on the default server) into
-# "ns/path" when it is on the approval SERVER, else prints nothing.
+# "'@alias/ns/path'", "mdnest://...", a browser link, or "ns/path" on the
+# default server) into "ns/path" when it is on the approval SERVER, else prints
+# nothing.
 approval_chat_ref() {
-  local t="$1" alias="" def=""
+  local t="$1" alias="" def="" decode=0
   t="${t#\'}"; t="${t%\'}"
-  t="${t#mdnest://}"
+  if [[ "$t" == mdnest://* ]]; then
+    t="${t#mdnest://}"; decode=1
+  elif [[ "$t" == [Hh][Tt][Tt][Pp]://* || "$t" == [Hh][Tt][Tt][Pp][Ss]://* ]]; then
+    browser_link_ref "$t" || return 0
+    t="@${BROWSER_ALIAS}/${BROWSER_REF}"; decode=1
+  fi
   if [[ "$t" == @* ]]; then
     alias="${t#@}"; alias="${alias%%/*}"
     [[ "$t" == */* ]] || return 0
@@ -2406,6 +2501,7 @@ approval_chat_ref() {
   fi
   [ "$alias" = "$APPROVAL_SERVER" ] || return 0
   [[ "$t" == */*.md ]] || return 0
+  if [ "$decode" = "1" ]; then t=$(urldecode "$t") || t=""; fi
   printf '%s' "$t"
   return 0
 }
@@ -2732,6 +2828,8 @@ mdnest CLI v${MDNEST_CLI_VERSION}
 
 QUICK REFERENCE (for AI agents / LLMs)
   Path format:  @alias/namespace/path/to/file.md
+                (a browser link also works: 'https://notes.example.com/#namespace/path/to/file.md',
+                 quoted; it reads from the logged-in server with that address)
   New file:     mdnest create @alias/namespace/path.md "content"
   Edit file:    mdnest write  @alias/namespace/path.md "content"  (file MUST exist)
   One string:   mdnest edit   @alias/namespace/path.md "old text" "new text"
@@ -2833,6 +2931,9 @@ EXAMPLES
 
   # Read
   mdnest read @work/engineering/Architecture/system-overview.md
+
+  # Read by the link in the browser's address bar (quote it: # starts a shell comment)
+  mdnest read 'https://work.company.com:3236/#engineering/Architecture/system-overview.md'
 
   # Append (creates the file if it doesn't exist)
   echo "- action item" | mdnest append @work/engineering/log.md -
