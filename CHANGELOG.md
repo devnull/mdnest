@@ -4,10 +4,34 @@ All notable changes to mdnest are documented here.
 
 ---
 
-## v4.8.8 (in progress)
+## v4.8.8: New slide decks from templates, a chat next to your note, and a much smaller first load
+
+"+ Slides" makes a new deck from your theme's slide templates, a chat can stay
+open beside the note you are working on, and the app's first download is about
+8 times smaller. Right-click a note to copy its browser link, and the CLI reads
+those links. Thanks to [@ecthelion77](https://github.com/ecthelion77) (Olivier
+Gintrand) for the slide templates work.
 
 ### Added
 
+- **"+ Slides" builds a new deck from your theme's slide templates**
+  ([#141](https://github.com/mahsanamin/mdnest/pull/141), by
+  [@ecthelion77](https://github.com/ecthelion77)). With `ENABLE_MARP` on,
+  "+ Slides" in the sidebar (and **New slides** in a folder's menu) opens a
+  dialog: name, title, theme, the look of the whole deck (for example light
+  or dark), the slides to include, size (16:9 or 4:3), slide numbers, header
+  and footer, with a live preview. Create writes an ordinary Markdown note
+  with the Marp front matter filled in. An admin can give each catalog theme
+  a templates deck in **Admin > Marp Themes > Slide templates**, one slide
+  per kind (title, agenda, metrics, closing...), and those are the slides the
+  dialog offers. Themes without templates offer a title slide and a content
+  slide. For agents, the MCP server has a new `list_marp_themes` tool, and
+  `create_marp` takes `class`, `size`, `header`, `footer` and `templates`.
+  On a server with a theme catalog, `create_marp` now refuses to create a
+  deck without a theme, or with a theme or template that does not exist,
+  and names the themes so the agent can ask you. Before, it silently used
+  `default`. Without a catalog nothing changes. The deck viewer also stops
+  cropping 4:3 decks.
 - **Copy browser link, and the CLI reads browser links.** Right-click a note
   and choose **Copy browser link** to get the same link the address bar shows
   when the note is open. The `mdnest` CLI now accepts that link wherever it
@@ -34,14 +58,6 @@ All notable changes to mdnest are documented here.
   screen. The tabs work with the arrow keys, and Escape closes an open menu
   or popup first, then the panel. The stickies drawer keeps its own width,
   now also limited so it never leaves the editor under 400px.
-
-### Fixed
-
-- **"You no longer have access to this chat" shows again.** When someone took
-  you off a private chat you had open, the chat showed a repeating error line
-  and kept asking the server for messages, instead of saying you were removed
-  and stopping. The app's 403 error did not carry its status, so the chat
-  could not tell it apart from other errors.
 
 ### Changed
 
@@ -71,6 +87,11 @@ All notable changes to mdnest are documented here.
 
 ### Fixed
 
+- **"You no longer have access to this chat" shows again.** When someone took
+  you off a private chat you had open, the chat showed a repeating error line
+  and kept asking the server for messages, instead of saying you were removed
+  and stopping. The app's 403 error did not carry its status, so the chat
+  could not tell it apart from other errors.
 - **A link opened while the app finishes loading opens the note.** A link
   put in the address bar right after sign-in, or while the app updated its
   own state, could land on the bare namespace ("No file selected"): the
