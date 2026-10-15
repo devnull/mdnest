@@ -264,7 +264,7 @@ function App() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem('mdnest_view_mode') || 'editor');
+  const [savedViewMode, setViewMode] = useState(() => localStorage.getItem('mdnest_view_mode') || 'editor');
   const [editorMode, setEditorMode] = useState('live');
   const [editorModeReady, setEditorModeReady] = useState(false);
   // When the Live editor throws on a specific file, remember that path
@@ -413,6 +413,28 @@ function App() {
   // `marp: true` is shown as a slide deck in the Live view instead of the editor.
   const marpEnabled = !!appConfig?.marp;
   const marpActive = marpEnabled && isMarpDoc(content);
+  // On a desktop a deck opens in split view (text left, slides right) unless
+  // a view was picked for that file before; a pick on a deck is kept with the
+  // file (mdnest_file_prefs), not as the app-wide mode, so other notes and the
+  // phone layout are unaffected.
+  const [fileView, setFileView] = useState(null); // { ns, path, mode }
+  useEffect(() => {
+    const mode = getFilePrefs(selectedNs, currentPath)?.viewMode;
+    setFileView(mode ? { ns: selectedNs, path: currentPath, mode } : null);
+  }, [selectedNs, currentPath, getFilePrefs]);
+  const deckViewMode = marpActive && !isMobile
+    ? ((fileView && fileView.ns === selectedNs && fileView.path === currentPath && fileView.mode) || 'split')
+    : null;
+  const viewMode = deckViewMode || savedViewMode;
+  const chooseViewMode = useCallback((mode) => {
+    if (deckViewMode) {
+      setFilePrefs(selectedNs, currentPath, { viewMode: mode });
+      setFileView({ ns: selectedNs, path: currentPath, mode });
+      return;
+    }
+    setViewMode(mode);
+    localStorage.setItem('mdnest_view_mode', mode);
+  }, [deckViewMode, selectedNs, currentPath, setFilePrefs]);
   // Marp decks must never go through the Live/WYSIWYG editor — it reformats the
   // markdown and corrupts the frontmatter and slide breaks. Force Basic (raw)
   // editing for them, regardless of the user's editor-mode preference. A
@@ -436,6 +458,10 @@ function App() {
   // split view. The deck is paginated (not scrollable), so unlike the plain
   // Preview it can't share a scrollTop — we map the ratio to a slide instead.
   const [marpScrollPct, setMarpScrollPct] = useState(0);
+  // The editor line the caret is on, so split view shows the slide being
+  // edited. A new object on every caret move or keystroke (`at`), which is
+  // what tells the deck to leave a slide picked with its own buttons.
+  const [marpCaret, setMarpCaret] = useState(null); // { line, at }
 
   // Live collaboration state
   const [presenceUsers, setPresenceUsers] = useState([]);
@@ -2085,8 +2111,15 @@ function App() {
     const editorEl = findScrollable(editorWrapperRef.current);
     if (!editorEl) return undefined;
     let raf = 0;
+    // A scroll right after the caret moved is the textarea keeping the caret
+    // in view (typing, arrow keys), not the user looking elsewhere, so it
+    // must not take the deck away from the caret's slide.
+    // -Infinity, not 0: performance.now() starts at page load, so 0 would
+    // swallow any scroll in the first 400 ms after opening a deck.
+    let caretAt = -Infinity;
     const update = () => {
       raf = 0;
+      if (performance.now() - caretAt < 400) return;
       const max = editorEl.scrollHeight - editorEl.clientHeight;
       const pct = max > 0 ? editorEl.scrollTop / max : 0;
       setMarpScrollPct((prev) => (Math.abs(prev - pct) < 0.005 ? prev : pct));
@@ -2094,9 +2127,33 @@ function App() {
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
     editorEl.addEventListener('scroll', onScroll, { passive: true });
     update(); // seed the initial slide from the current scroll position
+    // The caret: the plain-text editor is a textarea (Marp decks are always
+    // edited in Basic), so the line is a count of newlines before it.
+    const isTextarea = editorEl.tagName === 'TEXTAREA';
+    let caretRaf = 0;
+    const readCaret = () => {
+      caretRaf = 0;
+      const text = editorEl.value;
+      const end = editorEl.selectionStart;
+      let line = 0;
+      for (let i = text.indexOf('\n'); i !== -1 && i < end; i = text.indexOf('\n', i + 1)) line++;
+      setMarpCaret({ line, at: performance.now() });
+    };
+    // One update per frame however many of these one keystroke fires.
+    const onCaret = () => {
+      caretAt = performance.now();
+      if (!caretRaf) caretRaf = requestAnimationFrame(readCaret);
+    };
+    // Only what a person does. No 'select': the app restores a note's
+    // selection when it opens, and that fires one, which would read as the
+    // user moving the caret and swallow their first scroll.
+    const caretEvents = ['keyup', 'mouseup', 'input'];
+    if (isTextarea) for (const ev of caretEvents) editorEl.addEventListener(ev, onCaret);
     return () => {
       editorEl.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
+      if (isTextarea) for (const ev of caretEvents) editorEl.removeEventListener(ev, onCaret);
+      if (caretRaf) cancelAnimationFrame(caretRaf);
     };
   }, [viewMode, isMobile, marpActive, currentPath, editorMode]);
 
@@ -2263,8 +2320,7 @@ function App() {
           onDelete={canWriteCurrent ? handleToolbarDelete : null}
           viewMode={viewMode}
           onViewModeChange={(mode) => {
-            setViewMode(mode);
-            localStorage.setItem('mdnest_view_mode', mode);
+            chooseViewMode(mode);
             // Restore editor mode from user preference when switching to editor-only
             if (mode === 'editor') {
               const saved = localStorage.getItem('mdnest_editor_mode') || 'live';
@@ -2505,10 +2561,7 @@ function App() {
                             onHighlightClick={!commentsEnabled ? null : (commentId) => {
                               setShowComments(true);
                               setHighlightedCommentId(commentId);
-                              if (viewMode === 'preview') {
-                                setViewMode('editor');
-                                localStorage.setItem('mdnest_view_mode', 'editor');
-                              }
+                              if (viewMode === 'preview') chooseViewMode('editor');
                             }}
                           />
                       </Suspense>
@@ -2561,7 +2614,7 @@ function App() {
                   {marpEnabled && isMarpDoc(content) ? (
                     <ChunkErrorBoundary label="the slide renderer" resetKey={`${selectedNs}/${currentPath}`}>
                       <Suspense fallback={<div className="editor-loading">Loading slides…</div>}>
-                        <MarpDeck content={content || ''} title={currentPath} scrollPct={viewMode === 'split' && !isMobile ? marpScrollPct : undefined} />
+                        <MarpDeck content={content || ''} title={currentPath} scrollPct={viewMode === 'split' && !isMobile ? marpScrollPct : undefined} caret={viewMode === 'split' && !isMobile ? marpCaret : undefined} />
                       </Suspense>
                     </ChunkErrorBoundary>
                   ) : (

@@ -6,6 +6,24 @@ All notable changes to mdnest are documented here.
 
 ## v4.8.8 (in progress)
 
+### Changed
+
+- **"+ Slides" polish** (follow-up to
+  [#141](https://github.com/mahsanamin/mdnest/pull/141)). On a desktop a
+  Marp deck, new or existing, opens in split view, with the text on the left
+  and the slides on the right, unless you picked another view for that deck
+  before. A view picked on a deck is kept for that deck only, so other notes
+  keep your view mode. In split view the slide shown follows the cursor: type
+  or click in a slide and that slide is shown with the change, while scrolling
+  alone still moves through the deck and the deck's own arrows hold until the
+  cursor moves again. Before, the slide followed only the scroll position, so
+  typing could change a slide that was not on screen. In the dialog the preview fills its box in the deck's own shape (16:9
+  or 4:3) and follows the light theme, the form and preview sit side by side on
+  a wide screen, and on a phone Cancel and Create stay on screen. The sidebar's
+  create buttons sit two by two when all four are on, instead of squeezing into
+  one row. Typing in the dialog no longer redraws the preview on every key, and
+  the deck viewer reuses its Marp engine, which halves the cost of a redraw.
+
 ## v4.8.7: Personal Git backup is back, and images without a title open again
 
 You can manage the Git backup of your personal namespace from Settings again,

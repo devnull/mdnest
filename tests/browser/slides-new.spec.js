@@ -10,6 +10,7 @@ import { test, expect, request as pwRequest } from '@playwright/test';
 
 const USER = process.env.MDNEST_USER || 'e2e';
 const PASS = process.env.MDNEST_PASSWORD || 'e2epass123';
+const SEED = process.env.MDNEST_SEED_FILE || 'e2e-seed.md';
 const THEME = 'e2ebrand';
 const CSS = `/* @theme ${THEME} */\n@import 'default';\nsection.cover { background: #123; color: #fff; }\nsection.kpi {}\nsection.light {}\nsection.dark {}`;
 const TEMPLATES = [
@@ -32,6 +33,10 @@ async function signIn(page) {
   await page.fill('input[name=password]', PASS);
   await page.click('button:has-text("Sign in")');
   await expect(page.locator('.ns-label, .ns-select')).toBeVisible({ timeout: 20_000 });
+  // "+ Slides" and "+ Drawing" appear once the server config has loaded,
+  // after "+ Note". Counting them any earlier reads as "feature disabled"
+  // and silently skips the test, so give them a moment first.
+  await page.locator('button:has-text("+ Slides")').waitFor({ timeout: 5_000 }).catch(() => {});
 }
 
 async function storedNote(api, headers, page) {
@@ -90,14 +95,22 @@ test('+ Slides builds a deck from the theme slide templates', async ({ page, bas
       '<!-- _class: kpi light -->', '', '# Metrics', '',
     ].join('\n'));
 
-    // It renders as a deck, each slide with its own class. The note opens in
-    // the current view mode, which an earlier spec may have left at editor-only.
-    await page.locator('button[title="Preview only"]').click();
-    await expect(page.locator('.marp-deck-counter').first()).toHaveText('1 / 2', { timeout: 20_000 });
+    // It opens in split view, text and slides side by side, each slide with
+    // its own class, without changing the saved view mode for other notes.
+    await expect(page.locator('button[title="Split view"]')).toHaveClass(/\bactive\b/);
+    await expect(page.locator('.editor-textarea')).toBeVisible();
+    await expect(page.locator('.preview-wrapper .marp-deck-counter')).toHaveText('1 / 2', { timeout: 20_000 });
     const section = page.frameLocator('.marp-deck-frame').first().locator('section');
     await expect(section).toHaveClass(/\bcover\b/);
     await page.locator('button[aria-label="Next slide"]').first().click();
     await expect(section).toHaveClass(/\bkpi\b/);
+    expect(await page.evaluate(() => localStorage.getItem('mdnest_view_mode'))).toBeNull();
+
+    // The next note opens the way it would have: the default editor view.
+    await page.locator('.tree-row', { hasText: SEED }).first().click();
+    await expect(page.locator('.toolbar-path')).toContainText(SEED.replace(/\.md$/, ''), { timeout: 20_000 });
+    await expect(page.locator('.editor-wrapper')).toHaveCount(1);
+    await expect(page.locator('button[title="Editor only"]')).toHaveClass(/\bactive\b/);
   } finally {
     await api.delete(`/api/marp/themes?name=${THEME}`, { headers });
     await api.dispose();
@@ -130,9 +143,8 @@ test('+ Slides on a theme without templates: title and content slides, 4:3 fits 
   expect(body).toContain(`<!-- _class: lead invert -->\n\n# ${name.replace(/-/g, ' ').replace(/^d/, 'D')}`);
   expect(body).toContain('## Slide title');
 
-  // A 4:3 slide fits the 16:9 frame (letterboxed); it used to be sized by the
-  // frame's width and cropped at the bottom.
-  await page.locator('button[title="Preview only"]').click();
+  // A 4:3 slide fits its frame; it used to be sized by the frame's width and
+  // cropped at the bottom. The new deck opens with its slides showing.
   await expect(page.locator('.marp-deck-counter').first()).toHaveText('1 / 2', { timeout: 20_000 });
   const frame = page.locator('.marp-deck-frame').first();
   const slide = page.frameLocator('.marp-deck-frame').first().locator('svg[data-marpit-svg]');

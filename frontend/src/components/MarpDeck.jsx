@@ -43,20 +43,32 @@ export function builtinThemeCss(names) {
   return Object.fromEntries(names.map((n) => [n, set.get(n)?.css || '']));
 }
 
-// render turns the note into per-slide HTML fragments + the theme CSS. The
-// centralized themes are registered into the engine first, so a deck can select
-// one with `theme: <name>` instead of embedding a per-deck style block.
-function render(content, themes) {
+// makeEngine returns a Marp engine with the centralized themes registered, so
+// a deck can select one with `theme: <name>` instead of embedding a per-deck
+// style block. It is built once per theme list and reused for every render:
+// building it (and registering the themes) was half the cost of a render, and
+// a render keeps nothing from the previous one (a deck's own style and
+// directives apply to that render only).
+function makeEngine(themes) {
   const marp = new Marp({ html: true, script: false });
   for (const t of themes || []) {
     try { marp.themeSet.add(t.css); } catch { /* skip a malformed theme */ }
   }
+  return marp;
+}
+
+// render turns the note into per-slide HTML fragments, the theme CSS, and the
+// slide's width / height (from the slide's viewBox: 16:9 unless the deck sets
+// `size`), so the frame can take the deck's own shape.
+function render(content, marp) {
   const { html, css } = marp.render(content);
   // Marp emits one <svg data-marpit-svg> per slide inside a .marpit wrapper.
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const nodes = doc.querySelectorAll('svg[data-marpit-svg]');
   const slides = Array.from(nodes).map((n) => n.outerHTML);
-  return { slides: slides.length ? slides : [html], css };
+  const [, , w, h] = (nodes[0]?.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+  const ratio = w > 0 && h > 0 ? w / h : 16 / 9;
+  return { slides: slides.length ? slides : [html], css, ratio };
 }
 
 // slideStarts returns, from Marp source, the 0-based source line at which each
@@ -67,7 +79,7 @@ function render(content, themes) {
 // see marp.js for the exact rules.
 
 // exportable: false hides the HTML export (the new-deck preview has no note yet).
-export default function MarpDeck({ content, scrollPct, title, exportable = true }) {
+export default function MarpDeck({ content, scrollPct, caret, title, exportable = true }) {
   // Centralized themes load asynchronously; until then we render with the
   // built-in themes only (a deck that selects a custom theme falls back to
   // `default` for one frame, then re-renders once the catalog arrives).
@@ -78,13 +90,14 @@ export default function MarpDeck({ content, scrollPct, title, exportable = true 
     return () => { cancelled = true; };
   }, []);
 
-  const { slides, css, error } = useMemo(() => {
+  const engine = useMemo(() => makeEngine(themes), [themes]);
+  const { slides, css, ratio, error } = useMemo(() => {
     try {
-      return render(content, themes);
+      return render(content, engine);
     } catch (e) {
       return { slides: [], css: '', error: e.message };
     }
-  }, [content, themes]);
+  }, [content, engine]);
 
   const total = slides.length;
   const [idx, setIdx] = useState(0);
@@ -95,20 +108,36 @@ export default function MarpDeck({ content, scrollPct, title, exportable = true 
   // slide by *where the breaks really are* rather than an even split.
   const { starts, totalLines } = useMemo(() => slideStarts(content), [content]);
 
-  // Follow the editor's position in split view: the deck isn't scrollable, so
-  // the parent hands us the editor's 0..1 scroll ratio. We turn that ratio into
-  // a source line and pick the slide whose range contains it — this keeps the
-  // deck aligned even with a huge frontmatter/style block or an uneven slide at
-  // the top. Manual navigation (arrows/keys/buttons) still works; the next
-  // editor scroll re-syncs. Ignored when the parent passes nothing (fullscreen,
-  // mobile, or preview-only where there is no editor to track).
-  useEffect(() => {
-    if (typeof scrollPct !== 'number' || total <= 1) return;
-    const line = scrollPct * Math.max(0, totalLines - 1);
+  // In split view the deck follows the editor. The parent hands us two
+  // signals: the editor's 0..1 scroll ratio, and the caret's source line.
+  // Each maps to the slide whose range of source lines contains it (anchored
+  // to where slides really begin, so a huge frontmatter or an uneven slide
+  // does not throw it off). Whichever moved last wins: the caret while you
+  // type or click, the scroll ratio when you only scroll. Both effects react
+  // to their own signal only, never to a content change, so editing a slide
+  // does not pull the deck to a stale scroll position, and a slide picked
+  // with the buttons stays until the caret or the scroll moves again.
+  // Ignored when the parent passes nothing (fullscreen, mobile, preview-only).
+  const layoutRef = useRef({ starts, totalLines, total });
+  layoutRef.current = { starts, totalLines, total };
+  const slideAt = useCallback((line) => {
+    const { starts: st } = layoutRef.current;
     let s = 0;
-    while (s + 1 < starts.length && starts[s + 1] <= line) s++;
-    setIdx(clamp(s));
-  }, [scrollPct, total, clamp, starts, totalLines]);
+    while (s + 1 < st.length && st[s + 1] <= line) s++;
+    return s;
+  }, []);
+
+  useEffect(() => {
+    const { totalLines: n, total: t } = layoutRef.current;
+    if (typeof scrollPct !== 'number' || t <= 1) return;
+    setIdx(Math.min(t - 1, slideAt(scrollPct * Math.max(0, n - 1))));
+  }, [scrollPct, title, slideAt]);
+
+  useEffect(() => {
+    const { total: t } = layoutRef.current;
+    if (!caret || t <= 1) return;
+    setIdx(Math.min(t - 1, slideAt(caret.line)));
+  }, [caret, slideAt]);
 
   const rootRef = useRef(null);
   const go = useCallback((delta) => setIdx((i) => clamp(i + delta)), [clamp]);
@@ -152,8 +181,8 @@ export default function MarpDeck({ content, scrollPct, title, exportable = true 
     return `<!doctype html><html><head><meta charset="utf-8">`
       + `<style>${css}\nhtml,body{margin:0;height:100%}`
       + `body{display:flex;align-items:center;justify-content:center;background:#0b0b12}`
-      // The frame is 16:9; the slide's SVG fills it and keeps its own ratio
-      // (preserveAspectRatio), so a 4:3 deck is letterboxed, not cropped.
+      // The frame takes the deck's ratio (--deck-ratio); the SVG still keeps
+      // its own (preserveAspectRatio), so a rounding pixel never crops it.
       + `.marpit{width:100%;height:100%}svg[data-marpit-svg]{display:block;width:100%;height:100%}</style>`
       + `</head><body><div class="marpit">${slides[idx]}</div></body></html>`;
   }, [slides, css, idx, total]);
@@ -163,7 +192,7 @@ export default function MarpDeck({ content, scrollPct, title, exportable = true 
   }
 
   return (
-    <div className="marp-deck" ref={rootRef} tabIndex={0}>
+    <div className="marp-deck" ref={rootRef} tabIndex={0} style={{ '--deck-ratio': ratio }}>
       <div className="marp-deck-stage">
         <iframe
           className="marp-deck-frame"

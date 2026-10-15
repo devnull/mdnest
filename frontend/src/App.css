@@ -2957,24 +2957,43 @@ pre:hover .code-copy-btn {
 
 /* ===== Sidebar action buttons ===== */
 .sidebar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px 12px;
+  /* The row measures the sidebar, not the window: the sidebar is resizable
+     (180-600px), so a media query would pick the wrong layout. */
+  container-type: inline-size;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
+/* Equal columns, one per button. Four labels do not fit one row at the
+   default 260px sidebar with room to breathe, so four go two by two until
+   the sidebar is wide enough; a very narrow sidebar falls back to as many
+   columns as fit, never a label cut in two. */
+.sidebar-actions-row {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(5.25rem, 1fr));
+}
+.sidebar-actions-row[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.sidebar-actions-row[data-count="2"],
+.sidebar-actions-row[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container (min-width: 14.5rem) {
+  .sidebar-actions-row[data-count="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (min-width: 21rem) {
+  .sidebar-actions-row[data-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 .sidebar-action-btn {
-  /* Sized to the label so four buttons fit one row, and wrap to a second
-     row in a narrow sidebar instead of breaking a label in two. */
-  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--surface-2);
   color: var(--text);
   border: none;
-  padding: 5px 4px;
-  border-radius: 5px;
+  padding: 6px 8px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 0.8rem;
   font-weight: 500;
@@ -7085,22 +7104,54 @@ pre:hover .code-copy-btn {
 }
 
 /* "+ Slides": new Marp deck dialog. */
-.newdeck-modal { display: flex; flex-direction: column; }
+/* The dialog never outgrows the screen: the head and the Cancel / Create row
+   stay put and only the body scrolls, so Create is reachable on a phone
+   without scrolling past the whole form. */
+.modal.newdeck-modal {
+  display: flex;
+  flex-direction: column;
+  width: 960px;
+  max-width: 95vw;
+  max-height: min(90vh, calc(100dvh - 2rem));
+  overflow: hidden;
+}
+.newdeck-head { flex-shrink: 0; }
 .newdeck-where {
   font-size: 0.82rem;
   color: var(--text-secondary);
-  margin: -0.5rem 0 0.6rem;
+  margin: -0.5rem 0 0.8rem;
   overflow-wrap: anywhere;
 }
+/* Form and preview side by side when there is room, stacked otherwise. */
+.newdeck-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-content: start;
+}
+@media (min-width: 900px) {
+  .newdeck-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 1.25rem; }
+  .newdeck-preview { position: sticky; top: 0; }
+}
+.newdeck-modal .modal-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-top: 0.9rem;
+}
+.newdeck-modal .modal-error { flex-shrink: 0; margin: 0.6rem 0 0; }
 .newdeck-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.5rem 0.75rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem 0.75rem;
+  align-content: start;
 }
 .newdeck-field {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.25rem;
   min-width: 0;
   font-size: 0.75rem;
   color: var(--text-muted);
@@ -7117,29 +7168,24 @@ pre:hover .code-copy-btn {
   cursor: pointer;
 }
 .newdeck-link:disabled { color: var(--text-muted); cursor: default; }
+/* Even columns: every cell the same width, names cut with an ellipsis (the
+   full name and the slide's class are in the tooltip). */
 .newdeck-slides {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 0.25rem 0.9rem;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.35rem 0.9rem;
   max-height: 9.5rem;
   overflow-y: auto;
-  padding: 0.4rem 0.5rem;
+  padding: 0.5rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--surface);
 }
 .newdeck-slides .newdeck-check { min-width: 0; }
-.newdeck-slide-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.newdeck-slide-class {
-  flex-shrink: 0;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 0.3rem;
-}
+.newdeck-slide-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .newdeck-paginate { align-self: end; padding-bottom: 0.45rem; }
 .newdeck-empty {
-  height: 100%;
+  min-height: 10rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7149,24 +7195,48 @@ pre:hover .code-copy-btn {
 .newdeck-check {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   font-size: 0.85rem;
   color: var(--text);
   cursor: pointer;
 }
+.newdeck-check input { flex-shrink: 0; margin: 0; }
+/* The preview is the deck viewer. Its frame fills the box width in the
+   deck's own shape (MarpDeck sets --deck-ratio), and the chrome around it
+   follows the app theme; only the slide itself keeps the deck's colours. */
 .newdeck-preview {
-  height: 220px;
-  margin-top: 0.8rem;
+  align-self: start;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  flex-shrink: 0;
+  background: var(--surface);
 }
-.newdeck-preview .marp-deck-stage { padding: 0.5rem; }
-/* Sized by the height here: the box is short and wide, so a frame as wide
-   as the box would crop the slide. */
-.newdeck-preview .marp-deck-frame { height: 100%; width: auto; max-width: 100%; }
+.newdeck-preview .editor-loading { min-height: 10rem; }
+.newdeck-preview .marp-deck { height: auto; background: var(--surface); }
+.newdeck-preview .marp-deck-stage { flex: none; display: block; padding: 0.75rem; }
+.newdeck-preview .marp-deck-frame {
+  display: block;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-deep);
+  box-shadow: none;
+}
+.newdeck-preview .marp-deck-controls {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.newdeck-preview .marp-deck-controls button {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.newdeck-preview .marp-deck-controls button:hover:not(:disabled) { background: var(--surface-3); }
+.newdeck-preview .marp-deck-counter { color: var(--text-secondary); }
 @media (max-width: 560px) {
-  .newdeck-grid { grid-template-columns: 1fr; }
-  .newdeck-preview { height: 180px; }
+  .modal.newdeck-modal { padding: 1rem; max-width: calc(100vw - 1rem); }
+  .newdeck-grid { grid-template-columns: minmax(0, 1fr); }
 }
