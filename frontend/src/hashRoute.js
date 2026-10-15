@@ -79,3 +79,11 @@ export function formatRoute({ ns, path, stickies, board, chats, chat, heading })
   if (path && heading) note += '#' + encodeURIComponent(heading);
   return '#' + note;
 }
+
+// The link the address bar shows while a note is open, for "Copy browser
+// link". `base` is origin + pathname: an install served under a sub-path keeps
+// it, and the hash is built by formatRoute so the encoding cannot drift from
+// what App writes. The CLI accepts this link too (it matches the origin).
+export function noteLink(base, ns, path) {
+  return base + formatRoute({ ns, path });
+}

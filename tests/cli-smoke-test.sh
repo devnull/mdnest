@@ -203,6 +203,16 @@ assert_fails "delete removes the file" -- m read "$ROOT/search.md"
 # ── 15. mdnest:// copy-path URI with %-encoding decodes to the right file ────
 m create "$ROOT/sp ace.md" "spaced body" >/dev/null 2>&1
 assert_eq "mdnest:// URI percent-decodes to the spaced file" "spaced body" "$(m read "mdnest://${BASE}/${RUN_DIR}/sp%20ace.md" 2>/dev/null)"
+# The same note by the link the browser's address bar shows. The server's URL
+# comes from the saved server file, the one the CLI itself matches against.
+SMOKE_ALIAS="${ALIAS:-$(cat "$HOME/.config/mdnest/default" 2>/dev/null || true)}"
+SMOKE_URL="$(grep '^url=' "$HOME/.config/mdnest/servers/$SMOKE_ALIAS" 2>/dev/null | cut -d= -f2- || true)"
+if [ -n "$SMOKE_URL" ]; then
+  assert_eq "browser link reads the same note" "spaced body" \
+    "$(m read "${SMOKE_URL%/}/#${NS}/${RUN_DIR}/sp%20ace.md" 2>/dev/null)"
+else
+  echo "  (no saved server URL found — skipping the browser link check)"
+fi
 m delete "$ROOT/sp ace.md" >/dev/null 2>&1
 
 # ── 16. legacy `note` form: read must return the note, not its tree entry ────

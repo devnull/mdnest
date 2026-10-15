@@ -160,6 +160,24 @@ Every command uses a unified path:
 
 The same format is used when you right-click → Copy Path in the web UI.
 
+Two copied forms are accepted as they are, percent-encoding included:
+
+- `mdnest://@server/namespace/path.md`, from right-click → **Copy path for CLI**.
+- A browser link, from the address bar or right-click → **Copy browser link**:
+  `'https://notes.example.com/#namespace/path/to/file.md'`. Quote it, since an
+  unquoted `#` starts a shell comment. The CLI finds the server you are logged in
+  to with the same address (scheme, host and port; a base path, a `?query` and a
+  trailing `#Heading` are ignored). A chat link (`#!chats/namespace/Chats/room.md`)
+  reads the chat note. A task board or stickies link is refused, because it does
+  not name a note.
+
+If you are not logged in to a server with that address, nothing is read and the
+CLI prints the command to fix it, for example:
+
+```
+No server registered for https://notes.example.com. Run: mdnest login https://notes.example.com mdnest_yourtoken
+```
+
 ## Commands
 
 ### List namespaces or files

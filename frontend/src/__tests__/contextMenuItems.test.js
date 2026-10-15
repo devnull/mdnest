@@ -9,7 +9,7 @@ describe('right-click menu groups', () => {
   it('a writable note: organize, share, info, then Delete alone and last', () => {
     expect(labels(contextMenuGroups({ target: file, hasWrite: true, multi: true, chat: true }))).toEqual([
       ['Rename', 'Move to…', 'Copy to…'],
-      ['Download', 'Copy file contents', 'Copy path for CLI'],
+      ['Download', 'Copy file contents', 'Copy browser link', 'Copy path for CLI'],
       ['History', 'Authors'],
       ['Delete'],
     ]);
@@ -36,7 +36,7 @@ describe('right-click menu groups', () => {
   it('read-only: only what reading allows, and no Delete', () => {
     expect(labels(contextMenuGroups({ target: file, hasWrite: false }))).toEqual([
       ['Copy to…'],
-      ['Download', 'Copy file contents', 'Copy path for CLI'],
+      ['Download', 'Copy file contents', 'Copy browser link', 'Copy path for CLI'],
       ['History'],
     ]);
     expect(labels(contextMenuGroups({ target: folder, hasWrite: false }))).toEqual([

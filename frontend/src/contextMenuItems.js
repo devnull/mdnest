@@ -8,7 +8,7 @@
 //
 //   create    New note / folder / drawing / slides / chat, Paste here (folder, root)
 //   organize  Rename, Move to…, Copy to…
-//   share     Download, Copy file contents, Copy path for CLI
+//   share     Download, Copy file contents, Copy browser link, Copy path for CLI
 //   info      History, Authors                                  (files)
 //   admin     Manage access
 //   danger    Delete
@@ -50,6 +50,11 @@ export function contextMenuGroups({
     share.push({ label: isFolder ? 'Download as zip' : 'Download', action: 'download', icon: 'download' });
     if (isFile && (path.endsWith('.md') || path.endsWith('.txt'))) {
       share.push({ label: 'Copy file contents', action: 'copy-clipboard', icon: 'clipboard', hint: 'Copies the note as plain text. Paste it anywhere, or use Paste here in any mdnest to make a new note' });
+    }
+    // Files only: a folder has no page of its own, and its path in the hash
+    // would be opened as a note.
+    if (isFile) {
+      share.push({ label: 'Copy browser link', action: 'copy-link', icon: 'link', hint: 'Copies the link from the address bar for this note. The mdnest CLI accepts it too' });
     }
     // It copies an mdnest:// address for the CLI and agents, not a file-system
     // path; the plain "Copy path" read as the latter.
