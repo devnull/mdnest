@@ -4,6 +4,8 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.9 (in progress)
+
 ## v4.8.8: New slide decks from templates, a chat next to your note, and a much smaller first load
 
 "+ Slides" makes a new deck from your theme's slide templates, a chat can stay
