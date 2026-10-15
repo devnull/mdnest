@@ -19,7 +19,7 @@ import {
   adminUpdateGroupGrant,
   adminDeleteGroupGrant,
 } from '../api.js';
-import { clearMarpThemeCache } from './MarpDeck.jsx';
+import { clearMarpThemeCache } from '../marpThemes.js';
 import PathPicker from './PathPicker.jsx';
 import { PeopleTab, NamespacesTab, useDirectory } from './AdminPeople.jsx';
 import { useGit } from './AdminGit.jsx';

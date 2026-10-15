@@ -3,31 +3,39 @@
 // Config is pulled from /api/config at runtime (backend embeds the web config
 // there) so the same frontend bundle works on both local-mode and Firebase
 // mode deployments without a rebuild.
+//
+// The SDK itself is loaded on first use, not imported: a static import put
+// firebase/app + firebase/auth into the entry bundle of every install,
+// although only Firebase-mode servers ever call initFirebase
+// (__tests__/marp-entry-bundle.test.js pins it).
 
-import { initializeApp, getApps } from 'firebase/app';
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut,
-  onAuthStateChanged,
-} from 'firebase/auth';
-
+let _sdk = null; // { getApps, initializeApp, getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+let _ready = null;
 let _auth = null;
 let _provider = null;
+
+function loadSdk() {
+  if (!_ready) {
+    _ready = Promise.all([import('firebase/app'), import('firebase/auth')])
+      .then(([app, auth]) => { _sdk = { ...app, ...auth }; return _sdk; });
+  }
+  return _ready;
+}
 
 /**
  * Call once on app bootstrap with the `firebaseWebConfig` object returned
  * from /api/config. Safe to call multiple times — subsequent calls no-op.
+ * Loads the SDK; resolves to the Auth instance (null without a config).
  */
-export function initFirebase(webConfig) {
+export async function initFirebase(webConfig) {
   if (!webConfig || typeof webConfig !== 'object') return null;
-  if (getApps().length === 0) {
-    initializeApp(webConfig);
+  const sdk = await loadSdk();
+  if (sdk.getApps().length === 0) {
+    sdk.initializeApp(webConfig);
   }
   if (!_auth) {
-    _auth = getAuth();
-    _provider = new GoogleAuthProvider();
+    _auth = sdk.getAuth();
+    _provider = new sdk.GoogleAuthProvider();
   }
   return _auth;
 }
@@ -37,8 +45,11 @@ export function initFirebase(webConfig) {
  * Errors bubble up to the caller so the UI can display them.
  */
 export async function signInWithGoogle() {
+  if (!_auth && _ready) await _ready.then(() => null).catch(() => null);
   if (!_auth) throw new Error('Firebase not initialized');
-  const result = await signInWithPopup(_auth, _provider);
+  // No await before this when the SDK is ready (it starts loading as the app
+  // boots): a popup opened outside the click's own task can be blocked.
+  const result = await _sdk.signInWithPopup(_auth, _provider);
   const idToken = await result.user.getIdToken();
   return { idToken, user: result.user };
 }
@@ -51,7 +62,7 @@ export async function signInWithGoogle() {
 export async function signOutFirebase() {
   if (!_auth) return;
   try {
-    await signOut(_auth);
+    await _sdk.signOut(_auth);
   } catch {
     // Ignore — we're tearing down anyway.
   }
@@ -64,5 +75,5 @@ export async function signOutFirebase() {
  */
 export function onFirebaseAuthStateChanged(cb) {
   if (!_auth) return () => {};
-  return onAuthStateChanged(_auth, cb);
+  return _sdk.onAuthStateChanged(_auth, cb);
 }
