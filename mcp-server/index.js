@@ -275,9 +275,18 @@ async function marpThemeChoices() {
     const res = await api("/api/marp/themes");
     if (res.ok) {
       const list = await res.json();
+      // A theme's templates (up to 512 KB each) are parsed only when read:
+      // create_marp checks the theme name against the whole catalog but uses
+      // the templates of one theme at most.
       catalog = (Array.isArray(list) ? list : []).map((t) => {
-        const parsed = parseMarpTemplates(t.templates || "");
-        return { name: t.name, classes: marpThemeClasses(t.css), templates: parsed.templates.map((x) => x.name), _templates: parsed };
+        let parsed;
+        const tpl = () => (parsed ??= parseMarpTemplates(t.templates || ""));
+        return {
+          name: t.name,
+          classes: marpThemeClasses(t.css),
+          get templates() { return tpl().templates.map((x) => x.name); },
+          get _templates() { return tpl(); },
+        };
       });
     } else if (res.status !== 404) {
       catalog = null;

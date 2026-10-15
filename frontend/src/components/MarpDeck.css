@@ -17,11 +17,13 @@
   padding: 1rem;
 }
 
-/* 16:9 stage that fits the available area without overflowing. */
+/* A stage in the deck's own shape (--deck-ratio, set from the slide size:
+   16:9 by default, 4:3 with `size: 4:3`) that fits the available area
+   without overflowing. */
 .marp-deck-frame {
   width: 100%;
-  max-width: calc((100vh - 8rem) * 16 / 9);
-  aspect-ratio: 16 / 9;
+  max-width: calc((100vh - 8rem) * var(--deck-ratio, 1.7778));
+  aspect-ratio: var(--deck-ratio, 16 / 9);
   max-height: 100%;
   border: 1px solid #313244;
   border-radius: 8px;
@@ -93,5 +95,5 @@
   background: #0b0b12;
 }
 .marp-deck:fullscreen .marp-deck-frame {
-  max-width: calc(100vh * 16 / 9);
+  max-width: calc(100vh * var(--deck-ratio, 1.7778));
 }

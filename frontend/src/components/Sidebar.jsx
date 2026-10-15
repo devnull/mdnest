@@ -482,11 +482,18 @@ function Sidebar({
         {(onNewNote || onNewFolder) && (
           <div className="sidebar-actions">
             {/* Folder, then Note, Drawing and Slides: containers before the
-                things that go in them, and the file kinds adjacent. */}
-            {onNewFolder && <button className="sidebar-action-btn" onClick={onNewFolder} title={`New folder ${createHint}`}>+ Folder</button>}
-            {onNewNote && <button className="sidebar-action-btn" onClick={onNewNote} title={`New note ${createHint}`}>+ Note</button>}
-            {onNewDrawing && <button className="sidebar-action-btn" onClick={onNewDrawing} title={`New drawing ${createHint}`}>+ Drawing</button>}
-            {onNewSlides && <button className="sidebar-action-btn" onClick={onNewSlides} title={`New slides ${createHint}`}>+ Slides</button>}
+                things that go in them, and the file kinds adjacent. The
+                count picks the layout (App.css): equal columns, and four
+                buttons go two by two when one row would be cramped. */}
+            <div
+              className="sidebar-actions-row"
+              data-count={[onNewFolder, onNewNote, onNewDrawing, onNewSlides].filter(Boolean).length}
+            >
+              {onNewFolder && <button className="sidebar-action-btn" onClick={onNewFolder} title={`New folder ${createHint}`}>+ Folder</button>}
+              {onNewNote && <button className="sidebar-action-btn" onClick={onNewNote} title={`New note ${createHint}`}>+ Note</button>}
+              {onNewDrawing && <button className="sidebar-action-btn" onClick={onNewDrawing} title={`New drawing ${createHint}`}>+ Drawing</button>}
+              {onNewSlides && <button className="sidebar-action-btn" onClick={onNewSlides} title={`New slides ${createHint}`}>+ Slides</button>}
+            </div>
           </div>
         )}
 
