@@ -6,6 +6,17 @@ All notable changes to mdnest are documented here.
 
 ## v4.8.8 (in progress)
 
+### Added
+
+- **Copy browser link, and the CLI reads browser links.** Right-click a note
+  and choose **Copy browser link** to get the same link the address bar shows
+  when the note is open. The `mdnest` CLI now accepts that link wherever it
+  takes a path (`mdnest read 'https://notes.example.com/#team/Specs/api.md'`),
+  so an agent given a link from a chat can read the note. It uses the saved
+  server with the same address, and if there is none it prints the
+  `mdnest login` command to run. Task board and stickies links are refused,
+  because they do not name a note.
+
 ## v4.8.7: Personal Git backup is back, and images without a title open again
 
 You can manage the Git backup of your personal namespace from Settings again,

@@ -49,6 +49,66 @@ run_suite() {
   eq "json: commit"                 "abc1234"                   "$(printf '%s' "$CONFIG_JSON" | json_top_string commit)"
   eq "json: serverAlias"            "my-srv"                    "$(printf '%s' "$CONFIG_JSON" | json_top_string serverAlias)"
   eq "json: missing field is empty" ""                          "$(printf '%s' "$CONFIG_JSON" | json_top_string nope)"
+  run_browser_link_checks
+}
+
+# ── browser links ───────────────────────────────────────────────────────────
+# A link copied from the address bar (https://host/#ns/path.md) is read as a
+# note on the saved server with the same origin. parse_path exits on a refusal,
+# so each call runs in a subshell that prints what it parsed; HOME is a
+# throwaway with two saved servers.
+bl_parse() {  # bl_parse <home> <link>: "alias|ns|path" or "rc=N" + stderr
+  ( HOME="$1"; CONFIG_DIR="$1/.config/mdnest"; SERVERS_DIR="$CONFIG_DIR/servers"
+    DEFAULT_FILE="$CONFIG_DIR/default"; LEGACY_CONFIG="$CONFIG_DIR/config"; MDNEST_URL=""
+    parse_path "$2"; printf '%s|%s|%s' "$CURRENT_ALIAS" "$PARSED_NS" "$PARSED_PATH" ) 2>&1 || echo "rc=$?"
+}
+
+run_browser_link_checks() {
+  local h; h=$(mktemp -d "${TMPDIR:-/tmp}/mdnest-bl.XXXXXX")
+  mkdir -p "$h/.config/mdnest/servers"
+  printf 'url=http://localhost:3838/\ntoken=t\n' > "$h/.config/mdnest/servers/local"
+  printf 'url=https://Notes.Example.com\ntoken=t\n' > "$h/.config/mdnest/servers/pub"
+  printf 'url=https://notes.example.com:443/\ntoken=t\n' > "$h/.config/mdnest/servers/zpub"
+  printf 'pub' > "$h/.config/mdnest/default"
+  local before; before=$(find "$h" -type f | wc -l | tr -d ' ')
+
+  eq "browser link: port + encoded space" "local|demo|Slides/a b.md" \
+     "$(bl_parse "$h" 'http://localhost:3838/#demo/Slides/a%20b.md')"
+  eq "browser link: no slash before #, host case, heading dropped" "local|demo|x.md" \
+     "$(bl_parse "$h" 'http://LOCALHOST:3838#demo/x.md#Setup')"
+  eq "browser link: default port, base path, query, #/ prefix" "pub|team|Specs/api.md" \
+     "$(bl_parse "$h" 'https://notes.example.com:443/base/?x=1#/team/Specs/api.md')"
+  eq "browser link: encoded # ? % and non-ASCII" "pub|t m|a#b?c%d…é.md" \
+     "$(bl_parse "$h" 'https://notes.example.com/#t%20m/a%23b%3Fc%25d%E2%80%A6%C3%A9.md')"
+  eq "browser link: a chat route reads the chat note" "pub|ns|Chats/room.md" \
+     "$(bl_parse "$h" 'https://notes.example.com/#!chats/ns/Chats/room.md')"
+  eq "browser link: no hash means the server alone" "pub||" \
+     "$(bl_parse "$h" 'https://notes.example.com/')"
+  local out
+  out=$(bl_parse "$h" 'https://notes.example.com/#!board/ns/a.md')
+  eq "browser link: task board refused" "1" "${out##*rc=}"
+  out=$(bl_parse "$h" 'https://notes.example.com/#!stickies')
+  eq "browser link: stickies refused" "1" "${out##*rc=}"
+  out=$(bl_parse "$h" 'https://notes.example.com:8443/#ns/a.md')
+  eq "browser link: other port is another server (exit 1)" "1" "${out##*rc=}"
+  out=$(bl_parse "$h" 'http://notes.example.com/#ns/a.md')
+  eq "browser link: other scheme is another server (exit 1)" "1" "${out##*rc=}"
+  out=$(bl_parse "$h" 'https://other.example.com/base/#ns/a.md')
+  eq "browser link: unknown origin message" \
+     "No server registered for https://other.example.com. Run: mdnest login https://other.example.com mdnest_yourtoken" \
+     "${out%%$'\n'rc=*}"
+  if no_angle_brackets "$out"; then ok "browser link: suggested command is pasteable"; else bad "browser link: suggested command is pasteable" "$out"; fi
+  eq "browser link: nothing written" "$before" "$(find "$h" -type f | wc -l | tr -d ' ')"
+  # approval_chat_ref takes the same forms, decoded like parse_path.
+  eq "approval chat: browser link" "ns/Chats/my room.md" \
+     "$( HOME="$h"; SERVERS_DIR="$h/.config/mdnest/servers"; DEFAULT_FILE="$h/.config/mdnest/default"
+         APPROVAL_SERVER=pub approval_chat_ref 'https://notes.example.com/#!chats/ns/Chats/my%20room.md')"
+  eq "approval chat: browser link on another server is dropped" "" \
+     "$( HOME="$h"; SERVERS_DIR="$h/.config/mdnest/servers"; DEFAULT_FILE="$h/.config/mdnest/default"
+         APPROVAL_SERVER=local approval_chat_ref 'https://notes.example.com/#ns/a.md')"
+  eq "approval chat: mdnest:// is decoded" "ns/my room.md" \
+     "$(APPROVAL_SERVER=box approval_chat_ref 'mdnest://@box/ns/my%20room.md')"
+  rm -rf "$h"
 }
 
 # ── list rendering ──────────────────────────────────────────────────────────

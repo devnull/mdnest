@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { parseRoute, formatRoute } from './hashRoute';
+import { parseRoute, formatRoute, noteLink } from './hashRoute';
 import { chatPathFor, isChatDoc, chatDeleteWarning } from './chat.js';
 import Login from './components/Login.jsx';
 import LoginFirebase from './components/LoginFirebase.jsx';
@@ -1941,6 +1941,14 @@ function App() {
           await refreshTree(undefined, { broadcast: true });
           enterChats({ ns: selectedNs, path });
         } catch (e) { alert('Failed to create chat: ' + e.message); }
+        break;
+      }
+      case 'copy-link': {
+        if (!target?.path || !selectedNs) break;
+        const link = noteLink(window.location.origin + window.location.pathname, selectedNs, target.path);
+        setNotice(copyPlainText(link)
+          ? { kind: 'ok', text: `Copied the browser link to "${target.name || target.path.split('/').pop()}".` }
+          : { kind: 'error', text: 'The browser blocked the clipboard.' });
         break;
       }
       case 'copy-path': {
