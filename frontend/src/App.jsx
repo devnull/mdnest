@@ -30,6 +30,20 @@ const ExcalidrawEditor = lazy(() => loadWithRetry(() => import('./components/Exc
 // Lazy chats view, off by default (ENABLE_CHAT): notes-only installs never
 // download it.
 const ChatView = lazy(() => loadWithRetry(() => import('./components/ChatView.jsx')));
+// The two buttons that move a chat between full screen and the side panel.
+// Defined here, not in ChatView, so the chat chunk stays free of App's
+// layout decisions: ChatView just renders whatever action it is handed.
+const PIN_SIDE_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" /><line x1="14" y1="4" x2="14" y2="20" />
+  </svg>
+);
+const EXPAND_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+    <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+);
 import Preview from './components/Preview.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Settings from './components/Settings.jsx';
@@ -39,6 +53,7 @@ import HeadingLinks from './components/HeadingLinks.jsx';
 import { findHeading } from './headingLink.js';
 import CommentSidebar from './components/CommentSidebar.jsx';
 import StickiesPanel from './components/StickiesPanel.jsx';
+import { canDockChat, chatPanelBounds, stickiesPanelBounds, defaultChatPanelWidth, clampWidth } from './sidePanel.js';
 import StickiesBoard from './components/StickiesBoard.jsx';
 import ShareDialog from './components/ShareDialog.jsx';
 import HistoryModal from './components/HistoryModal.jsx';
@@ -281,10 +296,14 @@ function App() {
     return 'editor';
   });
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  // The side panel's chat width is clamped against it, on every resize and
+  // not only on drag, so a window made narrower never ends up with the panel
+  // covering the editor.
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
 
   // Track screen width changes for responsive rendering
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    const onResize = () => { setIsMobile(window.innerWidth <= 768); setViewportWidth(window.innerWidth); };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -338,18 +357,37 @@ function App() {
   // Personal sticky board. Not per-note and not per-namespace, so it lives at
   // the top of the app and is loaded once per session.
   const [stickies, setStickies] = useState([]);
-  // 'closed' | 'panel' | 'board'. Three states rather than two booleans: the
-  // drawer and the full-screen board are two views of one thing, and a pair of
-  // flags makes "both open at once" representable when it never is.
-  const [stickiesView, setStickiesView] = useState(() => (
-    // The DRAWER's open/closed state is remembered per browser, the way the
-    // view mode and the sidebar width already are. It is not in the URL —
-    // only the full-screen board gets a route, because the drawer sits on top
-    // of a note and a shared link should not force someone's stickies open.
-    // But it is a panel the user chose to have open, and a refresh throwing it
-    // away is the same annoyance as a refresh forgetting Basic vs Live.
-    localStorage.getItem('mdnest_stickies_open') === '1' ? 'panel' : 'closed'
-  ));
+  // The right-edge side panel and the sticky board, as ONE value:
+  // 'closed' | 'stickies' | 'chat' (the panel, on that tab) | 'board' (the
+  // full-screen sticky board). One value rather than several booleans: the
+  // panel shows one tab at a time and the board replaces the panel, and a set
+  // of flags would make "two of them open at once" representable when it
+  // never is.
+  const [sidePanel, setSidePanel] = useState(() => {
+    // The panel's open/closed state and its tab are remembered per browser,
+    // the way the view mode and the sidebar width already are. Not in the
+    // URL: only the full-screen board gets a route, because the panel sits
+    // beside a note and a shared link should not force someone's stickies or
+    // chat open. The key keeps its old name so an open drawer stays open
+    // across the upgrade.
+    if (localStorage.getItem('mdnest_stickies_open') !== '1') return 'closed';
+    return localStorage.getItem('mdnest_side_panel_tab') === 'chat' ? 'chat' : 'stickies';
+  });
+  // The chat docked in the panel ({ns, path} | null = the chat list), kept
+  // apart from openChat (the full-screen one) so expanding and pinning are
+  // explicit moves between the two. Remembered so a reload reopens it; the
+  // chat itself checks it is still readable and falls back to the list.
+  const [dockedChat, setDockedChat] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('mdnest_docked_chat') || 'null');
+      return v && typeof v.ns === 'string' && typeof v.path === 'string' ? { ns: v.ns, path: v.path } : null;
+    } catch { return null; }
+  });
+  const [dockedNs, setDockedNs] = useState(null); // the docked list's workspace
+  const [chatPanelWidth, setChatPanelWidth] = useState(() => {
+    const v = parseInt(localStorage.getItem('mdnest_chat_panel_width'), 10);
+    return Number.isFinite(v) ? v : null; // null = the default, min(40vw, 960px)
+  });
   const [stickySaveState, setStickySaveState] = useState('idle'); // idle | saving | error
   // 'loading' | 'ready' | 'error'. Load state is tracked, not collapsed into
   // an empty array: the board is written back WHOLE, so "we could not read
@@ -1027,7 +1065,7 @@ function App() {
       // Opened straight onto the board. The namespace and last file are still
       // restored underneath, so closing the board lands somewhere sensible
       // rather than on an empty editor.
-      if (hashStickies) setStickiesView('board');
+      if (hashStickies) setSidePanel('board');
       let targetNs = null;
       // A chat link names its chat's namespace; open that workspace so the
       // (namespace-scoped) chat list matches the chat on screen.
@@ -1188,12 +1226,17 @@ function App() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [authenticated, refreshTree]);
 
-  // Remember the drawer, not the board: the board has a URL, and restoring it
+  // Remember the panel, not the board: the board has a URL, and restoring it
   // from storage as well would let a stale flag fight the address bar.
   useEffect(() => {
-    if (stickiesView === 'board') return;
-    localStorage.setItem('mdnest_stickies_open', stickiesView === 'panel' ? '1' : '0');
-  }, [stickiesView]);
+    if (sidePanel === 'board') return;
+    localStorage.setItem('mdnest_stickies_open', sidePanel === 'closed' ? '0' : '1');
+    if (sidePanel !== 'closed') localStorage.setItem('mdnest_side_panel_tab', sidePanel);
+  }, [sidePanel]);
+  useEffect(() => {
+    if (dockedChat) localStorage.setItem('mdnest_docked_chat', JSON.stringify(dockedChat));
+    else localStorage.removeItem('mdnest_docked_chat');
+  }, [dockedChat]);
 
   // Set while a navigation that came FROM the address bar (back/forward, a
   // pasted link) is still loading its note. The URL already says what the
@@ -1210,7 +1253,7 @@ function App() {
   // Update URL hash
   useEffect(() => {
     if (hashNavPending.current || hashIsPending()) return;
-    if (stickiesView === 'board') {
+    if (sidePanel === 'board') {
       setHash(null, null, true);
       return;
     }
@@ -1224,7 +1267,7 @@ function App() {
       // enabled; keep the board route rather than rewriting a deep link away.
       setHash(selectedNs, currentPath, false, showTaskBoard && (!appConfig || taskBoardEnabled));
     }
-  }, [selectedNs, currentPath, stickiesView, showTaskBoard, appConfig, taskBoardEnabled, chatsOpen, openChat, chatEnabled]);
+  }, [selectedNs, currentPath, sidePanel, showTaskBoard, appConfig, taskBoardEnabled, chatsOpen, openChat, chatEnabled]);
 
   // Handle browser back/forward
   useEffect(() => {
@@ -1232,7 +1275,7 @@ function App() {
       const { ns, path, stickies, board, chats, chat, heading } = parseHash();
       adoptHash();
       if (stickies) {
-        setStickiesView('board');
+        setSidePanel('board');
         return; // the board route says nothing about which note is open
       }
       if (chats) {
@@ -1244,7 +1287,7 @@ function App() {
         return; // the chats route names a chat, not the note underneath
       }
       setChatsOpen(false);
-      setStickiesView((v) => (v === 'board' ? 'closed' : v));
+      setSidePanel((v) => (v === 'board' ? 'closed' : v));
       setShowTaskBoard(board);
       if (ns && ns !== selectedNs) {
         setSelectedNs(ns);
@@ -1496,6 +1539,7 @@ function App() {
     // Close the room only if it is the chat that went: deleting another one
     // from the list's right-click menu must leave the open chat alone.
     setOpenChat((cur) => (cur && cur.ns === ns && cur.path === path ? null : cur));
+    setDockedChat((cur) => (cur && cur.ns === ns && cur.path === path ? null : cur));
     return true;
   }, [selectedNs, currentPath, getLastPath, setLastPath, refreshTree]);
 
@@ -1558,6 +1602,37 @@ function App() {
   const setChatsActive = useCallback((on) => {
     if (on) enterChats(null); else leaveChats();
   }, [enterChats, leaveChats]);
+
+  // The side panel. A chat docks only when there is room for it next to a
+  // usable editor (never on a phone); otherwise Chat stays full screen, and no
+  // Pin button is offered. While full-screen chats are open the docked chat
+  // is not shown, so the same chat is never mounted, and polled, twice.
+  const chatCanDock = chatEnabled && !isMobile && canDockChat(viewportWidth, sidebarWidth);
+  const chatDocked = sidePanel === 'chat' && chatCanDock && !chatsOpen;
+  const panelShown = sidePanel === 'stickies' || chatDocked;
+  const chatBounds = chatPanelBounds(viewportWidth, sidebarWidth);
+  const chatWidth = clampWidth(chatPanelWidth ?? defaultChatPanelWidth(viewportWidth), chatBounds);
+  const stickiesBounds = stickiesPanelBounds(viewportWidth, sidebarWidth);
+  const stickiesWidth = clampWidth(commentWidth, stickiesBounds);
+  const openSidePanel = useCallback((tab) => {
+    setShowComments(false); // comments own the same edge
+    setSidePanel(tab);
+  }, []);
+  // Pin: leave full-screen chats for where you came from, with this chat
+  // docked beside it.
+  const pinChat = useCallback((chat) => {
+    leaveChats();
+    setDockedNs(chat.ns);
+    setDockedChat(chat);
+    openSidePanel('chat');
+  }, [leaveChats, openSidePanel]);
+  // Expand: the docked chat, full screen. The panel stays on its Chat tab,
+  // hidden while chats are open, so Back returns to note + docked chat.
+  const expandChat = useCallback((chat) => { enterChats(chat); }, [enterChats]);
+  const selectDockedChat = useCallback((chat) => {
+    if (chat) setDockedNs(chat.ns);
+    setDockedChat(chat);
+  }, []);
   // The "is this note a chat?" decision, made where a note finishes loading
   // rather than in an effect on `content`: that effect stayed armed when the
   // click reloaded identical text (or the load failed), then fired on the
@@ -2341,8 +2416,10 @@ function App() {
       <div
         className="main"
         style={
-          !isMobile && ((commentsEnabled && showComments && currentPath) || stickiesView === 'panel')
-            ? { marginRight: commentWidth }
+          isMobile ? undefined
+            : commentsEnabled && showComments && currentPath ? { marginRight: commentWidth }
+            : chatDocked ? { marginRight: chatWidth }
+            : panelShown ? { marginRight: stickiesWidth }
             : undefined
         }
       >
@@ -2403,17 +2480,19 @@ function App() {
           }}
           onRefresh={handleRefresh}
           commentCount={commentsEnabled ? comments.filter(c => !c.parentId && !c.resolved).length : 0}
-          stickiesOpen={stickiesView !== 'closed'}
+          stickiesOpen={sidePanel === 'stickies' || sidePanel === 'board'}
           onToggleStickies={() => {
             // Two drawers, one strip of screen. Opening either closes the
             // other rather than stacking them — the comment panel already
             // owns this edge, and two overlapping fixed panels is not a
             // layout, it is a bug report.
-            setStickiesView((v) => {
-              if (v === 'closed') setShowComments(false);
-              // The button closes whichever view is open and reopens at the
-              // drawer — it is one toggle, not a cycle through three states.
-              return v === 'closed' ? 'panel' : 'closed';
+            setSidePanel((v) => {
+              if (v === 'stickies' || v === 'board') return 'closed';
+              // Closed, or on the Chat tab: show the stickies. The button
+              // closes whichever sticky view is open and reopens at the
+              // drawer — one toggle, not a cycle through the states.
+              setShowComments(false);
+              return 'stickies';
             });
           }}
           onToggleComments={!commentsEnabled ? null : () => {
@@ -2423,7 +2502,7 @@ function App() {
             // general comments work everywhere, so we no longer force the
             // user out of their current view.
             setShowComments((v) => {
-              if (!v) setStickiesView('closed');
+              if (!v) setSidePanel('closed');
               return !v;
             });
           }}
@@ -2504,6 +2583,13 @@ function App() {
                 onOpenNote={openNoteFromChat}
                 onDeleteChat={deleteChat}
                 onClose={leaveChats}
+                roomAction={chatCanDock && openChat ? {
+                  title: `Pin to side panel, next to ${chatsBackLabel}`,
+                  label: 'Pin to side panel',
+                  testId: 'chat-pin-side',
+                  icon: PIN_SIDE_ICON,
+                  onClick: () => pinChat(openChat),
+                } : null}
               />
             </Suspense>
             </ChunkErrorBoundary>
@@ -2835,25 +2921,67 @@ function App() {
           }}
         />
       )}
-      {stickiesView === 'panel' && (
+      {panelShown && (
         <StickiesPanel
           stickies={stickies}
           onChange={updateStickies}
-          onClose={() => setStickiesView('closed')}
-          onExpand={() => setStickiesView('board')}
+          onClose={() => setSidePanel('closed')}
+          onExpand={() => setSidePanel('board')}
           saveState={stickySaveState}
           loadState={stickiesLoad}
           onRetry={loadStickies}
-          width={!isMobile ? commentWidth : undefined}
-          onWidthChange={!isMobile ? (w) => { setCommentWidth(w); localStorage.setItem('mdnest_comment_width', String(w)); } : undefined}
+          tab={chatDocked ? 'chat' : 'stickies'}
+          onTab={chatCanDock && !chatsOpen ? setSidePanel : null}
+          {...(isMobile ? {} : chatDocked ? {
+            width: chatWidth,
+            minWidth: chatBounds.min,
+            maxWidth: chatBounds.max,
+            onWidthChange: (w) => { setChatPanelWidth(w); localStorage.setItem('mdnest_chat_panel_width', String(w)); },
+          } : {
+            width: stickiesWidth,
+            minWidth: stickiesBounds.min,
+            maxWidth: stickiesBounds.max,
+            onWidthChange: (w) => { setCommentWidth(w); localStorage.setItem('mdnest_comment_width', String(w)); },
+          })}
+          chat={chatDocked && (
+            <ChunkErrorBoundary
+              label="chats"
+              resetKey="docked-chat"
+              onDismiss={() => setSidePanel('stickies')}
+              dismissLabel="Show stickies"
+            >
+            <Suspense fallback={<div className="editor-loading">Loading chats...</div>}>
+              <ChatView
+                docked
+                ns={dockedChat?.ns || dockedNs || selectedNs}
+                namespaces={namespaces}
+                onSelectNs={(n) => { setDockedNs(n); if (dockedChat && dockedChat.ns !== n) setDockedChat(null); }}
+                account={isMulti ? userInfo?.username : null}
+                serverAlias={appConfig?.serverAlias}
+                isMobile={false}
+                openChat={dockedChat}
+                onSelectChat={selectDockedChat}
+                onOpenNote={openNoteIn}
+                onDeleteChat={deleteChat}
+                onClose={null}
+                roomAction={dockedChat ? {
+                  title: 'Expand to full screen',
+                  testId: 'chat-expand',
+                  icon: EXPAND_ICON,
+                  onClick: () => expandChat(dockedChat),
+                } : null}
+              />
+            </Suspense>
+            </ChunkErrorBoundary>
+          )}
         />
       )}
-      {stickiesView === 'board' && (
+      {sidePanel === 'board' && (
         <StickiesBoard
           stickies={stickies}
           onChange={updateStickies}
-          onCollapse={() => setStickiesView('panel')}
-          onClose={() => setStickiesView('closed')}
+          onCollapse={() => setSidePanel('stickies')}
+          onClose={() => setSidePanel('closed')}
           saveState={stickySaveState}
           loadState={stickiesLoad}
           onRetry={loadStickies}

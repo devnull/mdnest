@@ -16,6 +16,10 @@ class PermissionError extends Error {
   constructor(message) {
     super(message);
     this.name = 'PermissionError';
+    // Callers that tell a 403 from a 404 read .status, as they do on errors
+    // built from a response. Without it the chat's "you were removed" state
+    // never showed: a removed member got a repeating error line instead.
+    this.status = 403;
   }
 }
 

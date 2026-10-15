@@ -10,12 +10,28 @@ import {
   MAX_STICKIES,
 } from '../stickies.js';
 
-// The sticky board as a right-edge drawer — the quick way in, for jotting one
-// down without leaving the note you are reading. The full-screen corkboard
-// (StickiesBoard) is the same cards laid out spatially; the Expand button
-// swaps between them.
-function StickiesPanel({ stickies, onChange, onClose, onExpand, saveState, loadState, onRetry, width, onWidthChange }) {
+const RESIZE_STEP = 16; // px per arrow key on the resize handle
+
+// The right-edge side panel. Its first job was the sticky board as a drawer,
+// the quick way in for jotting one down without leaving the note you are
+// reading; the full-screen corkboard (StickiesBoard) is the same cards laid
+// out spatially, and the Expand button swaps between them. When chat can dock
+// here, the panel also has a Chat tab (onTab is set and `chat` is what it
+// shows). One panel with tabs rather than a second drawer: two panels on one
+// edge would have to fight over the same strip of screen.
+//
+// width / minWidth / maxWidth come from App per tab, already clamped to what
+// leaves the editor usable, so the drag and the arrow keys only clamp again.
+function StickiesPanel({
+  stickies, onChange, onClose, onExpand, saveState, loadState, onRetry,
+  width, minWidth = 260, maxWidth = 760, onWidthChange,
+  tab = 'stickies', onTab, chat,
+}) {
   const focusIdRef = useRef(null); // card to focus after the next render
+  const tabRefs = useRef({});
+  const clampWidth = (w) => Math.min(maxWidth, Math.max(minWidth, w));
+  const tabs = onTab ? ['chat', 'stickies'] : null;
+  const showChat = tab === 'chat' && !!onTab;
 
   const full = isBoardFull(stickies);
 
@@ -35,18 +51,65 @@ function StickiesPanel({ stickies, onChange, onClose, onExpand, saveState, loadS
     if (node) node.focus();
   }, [stickies]);
 
+  // Escape closes the panel, but only once nothing smaller is open: a popup
+  // or a menu closes first (they handle Escape themselves), then the panel.
+  const onKeyDown = (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (document.querySelector('.context-menu, .chat-dialog-backdrop')) return;
+    e.stopPropagation();
+    onClose();
+  };
+
+  // Real tabs: arrow keys move between them and select (the WAI-ARIA tabs
+  // pattern with automatic activation).
+  const onTabKey = (e) => {
+    const i = tabs.indexOf(tab);
+    let next = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    else if (e.key === 'Home') next = tabs[0];
+    else if (e.key === 'End') next = tabs[tabs.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    onTab(next);
+    tabRefs.current[next]?.focus();
+  };
+
   return (
-    <div className="stickies-panel" style={width ? { width } : undefined}>
+    <div
+      className={`stickies-panel${showChat ? ' side-panel-chat' : ''}`}
+      style={width ? { width } : undefined}
+      onKeyDown={onKeyDown}
+      data-testid="side-panel"
+    >
       {onWidthChange && (
         <div
           className="stickies-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the side panel"
+          aria-valuenow={width}
+          aria-valuemin={minWidth}
+          aria-valuemax={maxWidth}
+          tabIndex={0}
+          title="Drag, or use the arrow keys, to resize"
+          onKeyDown={(e) => {
+            // Anchored to the right edge: Left widens, Right narrows.
+            let next = null;
+            if (e.key === 'ArrowLeft') next = (width || minWidth) + RESIZE_STEP;
+            else if (e.key === 'ArrowRight') next = (width || minWidth) - RESIZE_STEP;
+            else if (e.key === 'Home') next = minWidth;
+            else if (e.key === 'End') next = maxWidth;
+            if (next === null) return;
+            e.preventDefault();
+            onWidthChange(clampWidth(next));
+          }}
           onMouseDown={(e) => {
             e.preventDefault();
             const startX = e.clientX;
             const startWidth = width || 320;
             const onMove = (ev) => {
               // Anchored to the right edge, so dragging left widens it.
-              onWidthChange(Math.min(760, Math.max(260, startWidth + startX - ev.clientX)));
+              onWidthChange(clampWidth(startWidth + startX - ev.clientX));
             };
             const onUp = () => {
               document.removeEventListener('mousemove', onMove);
@@ -63,65 +126,103 @@ function StickiesPanel({ stickies, onChange, onClose, onExpand, saveState, loadS
       )}
 
       <div className="stickies-header">
-        <h3>Stickies</h3>
-        {/* The save state is shown, not hidden behind a silent autosave. The
-            board is the one place in mdnest holding content that exists
-            nowhere else — no namespace, no git remote — so "did that land?"
-            is a fair question and an error must be visible, not console-only. */}
-        <span className={`stickies-save-state ${saveState}`}>
-          {saveState === 'saving' && 'Saving…'}
-          {saveState === 'error' && 'Not saved'}
-        </span>
-        <button
-          className="stickies-expand"
-          onClick={onExpand}
-          title="Open the full board"
-          aria-label="Open the full board"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
-            <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
-          </svg>
-        </button>
-        <button className="stickies-close" onClick={onClose} aria-label="Close stickies">&times;</button>
-      </div>
-
-      <div className="stickies-add-row">
-        <button
-          className="stickies-add"
-          onClick={handleAdd}
-          disabled={full || loadState !== 'ready'}
-          title={full ? `A board holds at most ${MAX_STICKIES} stickies` : 'Add a sticky'}
-        >
-          + New sticky
-        </button>
-      </div>
-
-      <div className="stickies-list">
-        {loadState === 'error' && <StickiesLoadError onRetry={onRetry} />}
-        {loadState === 'loading' && <div className="stickies-empty">Loading…</div>}
-
-        {loadState === 'ready' && stickies.length === 0 && (
-          <div className="stickies-empty">
-            <p>No stickies yet.</p>
-            {/* Said here rather than in the docs alone: this is the one place
-                in mdnest where content is deliberately not backed up, and the
-                moment to know that is before you paste something into it. */}
-            <p className="stickies-empty-note">
-              Private to you and kept on this server only — stickies are never
-              synced to a git remote. Anything you need backed up belongs in a note.
-            </p>
+        {tabs ? (
+          <div className="side-panel-tabs" role="tablist" aria-label="Side panel">
+            {tabs.map((t) => (
+              <button
+                key={t}
+                ref={(el) => { tabRefs.current[t] = el; }}
+                id={`side-panel-tab-${t}`}
+                role="tab"
+                className={`side-panel-tab${tab === t ? ' active' : ''}`}
+                aria-selected={tab === t}
+                aria-controls="side-panel-body"
+                tabIndex={tab === t ? 0 : -1}
+                onClick={() => onTab(t)}
+                onKeyDown={onTabKey}
+                data-testid={`side-panel-tab-${t}`}
+              >
+                {t === 'chat' ? 'Chat' : 'Stickies'}
+              </button>
+            ))}
           </div>
+        ) : (
+          <h3>Stickies</h3>
         )}
+        {!showChat && <>
+          {/* The save state is shown, not hidden behind a silent autosave. The
+              board is the one place in mdnest holding content that exists
+              nowhere else — no namespace, no git remote — so "did that land?"
+              is a fair question and an error must be visible, not console-only. */}
+          <span className={`stickies-save-state ${saveState}`}>
+            {saveState === 'saving' && 'Saving…'}
+            {saveState === 'error' && 'Not saved'}
+          </span>
+          <button
+            className="stickies-expand"
+            onClick={onExpand}
+            title="Open the full board"
+            aria-label="Open the full board"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          </button>
+        </>}
+        <button
+          className="stickies-close"
+          onClick={onClose}
+          aria-label={tabs ? 'Close the side panel' : 'Close stickies'}
+          title={tabs ? 'Close the side panel (Esc). The chat and its draft are kept.' : 'Close stickies'}
+        >&times;</button>
+      </div>
 
-        {loadState === 'ready' && stickies.map((c) => (
-          <StickyCard
-            key={c.id}
-            card={c}
-            onCardChange={(next) => onChange(editSticky(stickies, c.id, next))}
-            onDelete={() => onChange(removeSticky(stickies, c.id))}
-          />
-        ))}
+      <div
+        className="side-panel-body"
+        id="side-panel-body"
+        role={tabs ? 'tabpanel' : undefined}
+        aria-labelledby={tabs ? `side-panel-tab-${tab}` : undefined}
+      >
+        {showChat ? chat : <>
+          <div className="stickies-add-row">
+            <button
+              className="stickies-add"
+              onClick={handleAdd}
+              disabled={full || loadState !== 'ready'}
+              title={full ? `A board holds at most ${MAX_STICKIES} stickies` : 'Add a sticky'}
+            >
+              + New sticky
+            </button>
+          </div>
+
+          <div className="stickies-list">
+            {loadState === 'error' && <StickiesLoadError onRetry={onRetry} />}
+            {loadState === 'loading' && <div className="stickies-empty">Loading…</div>}
+
+            {loadState === 'ready' && stickies.length === 0 && (
+              <div className="stickies-empty">
+                <p>No stickies yet.</p>
+                {/* Said here rather than in the docs alone: this is the one place
+                    in mdnest where content is deliberately not backed up, and the
+                    moment to know that is before you paste something into it. */}
+                <p className="stickies-empty-note">
+                  Private to you and kept on this server only — stickies are never
+                  synced to a git remote. Anything you need backed up belongs in a note.
+                </p>
+              </div>
+            )}
+
+            {loadState === 'ready' && stickies.map((c) => (
+              <StickyCard
+                key={c.id}
+                card={c}
+                onCardChange={(next) => onChange(editSticky(stickies, c.id, next))}
+                onDelete={() => onChange(removeSticky(stickies, c.id))}
+              />
+            ))}
+          </div>
+        </>}
       </div>
     </div>
   );
