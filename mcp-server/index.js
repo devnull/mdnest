@@ -173,13 +173,133 @@ export function buildExcalidraw({ elements = [], files = {}, background = "#ffff
 
 // buildMarpDeck renders a Marp slide deck: YAML frontmatter carrying the
 // `marp: true` marker Marp detection keys on, followed by slides separated by a
-// blank-line-delimited `---`. Slides default to a single title slide.
-export function buildMarpDeck({ title = "Untitled deck", theme = "default", paginate = true, slides } = {}) {
-  const fm = ["---", "marp: true", `theme: ${theme}`, `paginate: ${paginate ? "true" : "false"}`, "---"];
+// blank-line-delimited `---`. Slides default to a single title slide. The
+// optional keys match what the app's "+ Slides" dialog writes
+// (frontend/src/newDeck.js); unset ones are left out.
+const MARP_IDENT = /^[A-Za-z_][\w-]*$/;
+const marpOneLine = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+export function buildMarpDeck({ title = "Untitled deck", theme = "default", paginate = true, slides, slideClass, size, header, footer, extraFrontmatter = [] } = {}) {
+  const fm = ["---", "marp: true", ...extraFrontmatter, `theme: ${MARP_IDENT.test(theme) ? theme : "default"}`];
+  const classes = String(slideClass ?? "").split(/\s+/).filter((c) => MARP_IDENT.test(c));
+  if (classes.length) fm.push(`class: ${classes.join(" ")}`);
+  fm.push(`paginate: ${paginate ? "true" : "false"}`);
+  if (size === "4:3") fm.push("size: 4:3");
+  // JSON strings are valid YAML double-quoted scalars, so any text is safe.
+  if (marpOneLine(header)) fm.push(`header: ${JSON.stringify(marpOneLine(header))}`);
+  if (marpOneLine(footer)) fm.push(`footer: ${JSON.stringify(marpOneLine(footer))}`);
+  fm.push("---");
   const body = Array.isArray(slides) && slides.length
     ? slides.map((s) => String(s).trim())
     : [`# ${title}`];
   return fm.join("\n") + "\n\n" + body.join("\n\n---\n\n") + "\n";
+}
+
+// Marp's built-in themes and the slide classes their stylesheets define (as
+// marp-core ships them). Catalog themes often @import one of these.
+export const MARP_BUILTIN_THEMES = { default: ["invert"], gaia: ["invert", "gaia", "lead"], uncover: ["invert"] };
+
+// marpThemeClasses lists the slide classes a theme stylesheet styles
+// (`section.lead`, `section:where(.invert)`), plus those of an @imported
+// built-in theme. Same rule as the app's "+ Slides" dialog (frontend/src/newDeck.js).
+export function marpThemeClasses(css) {
+  const out = [];
+  const add = (c) => { if (MARP_IDENT.test(c) && !out.includes(c)) out.push(c); };
+  const text = String(css || "");
+  for (const m of text.matchAll(/@import\s+(?:url\()?\s*['"]([^'"]+)['"]/g)) {
+    for (const c of MARP_BUILTIN_THEMES[m[1]] || []) add(c);
+  }
+  for (const m of text.matchAll(/section(?:\.([A-Za-z_][\w-]*)|:(?:where|is)\(\s*\.([A-Za-z_][\w-]*))/g)) add(m[1] || m[2]);
+  return out;
+}
+
+// parseMarpTemplates reads a theme's slide templates deck (Admin > Marp
+// Themes): one template per slide, named by `<!-- template: Name -->` (removed
+// from the slide) or else by its first heading. Same rules as the app's
+// "+ Slides" dialog (frontend/src/newDeck.js).
+const MARP_TEMPLATE_RE = /^[ \t]*<!--\s*template:\s*(.*?)\s*-->[ \t]*\n?/m;
+const MARP_MANAGED_KEYS = ["marp", "theme", "class", "paginate", "size", "header", "footer"];
+export function parseMarpTemplates(markdown) {
+  const { frontmatter, slides } = splitMarp(String(markdown ?? "").replace(/\r\n/g, "\n"));
+  const fm = [];
+  for (const line of frontmatter ? frontmatter.split("\n").slice(1, -1) : []) {
+    const m = line.match(/^([A-Za-z_][\w-]*)\s*:(.*)$/);
+    if (m) {
+      let value = m[2].trim();
+      if (/^".*"$/.test(value)) { try { value = JSON.parse(value); } catch { value = value.slice(1, -1); } }
+      else if (/^'.*'$/.test(value)) value = value.slice(1, -1).replace(/''/g, "'");
+      fm.push({ key: m[1], raw: line, value });
+    } else if (fm.length) {
+      fm[fm.length - 1].raw += "\n" + line;
+    }
+  }
+  const seen = new Map();
+  const templates = slides.filter((s) => s.trim() !== "").map((raw, idx) => {
+    const named = raw.match(MARP_TEMPLATE_RE);
+    const body = (named ? raw.replace(MARP_TEMPLATE_RE, "") : raw).trim();
+    let inFence = false;
+    let heading = "";
+    for (const line of body.split("\n")) {
+      if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+      const h = !inFence && line.match(/^#{1,6}\s+(.+?)\s*#*\s*$/);
+      if (h) { heading = h[1].replace(/<[^>]+>/g, "").replace(/[*_`~]/g, "").trim(); break; }
+    }
+    let name = (named && named[1]) || heading || `Slide ${idx + 1}`;
+    const n = (seen.get(name) || 0) + 1;
+    seen.set(name, n);
+    if (n > 1) name = `${name} (${n})`;
+    const cls = (body.match(/<!--\s*_class:\s*([^>]*?)\s*-->/) || [])[1] || "";
+    return { name, body, slideClass: cls };
+  });
+  return { frontmatter: fm, templates };
+}
+
+// marpWithTitle puts the deck title in the first heading-1 of a slide.
+function marpWithTitle(body, title) {
+  const t = marpOneLine(title);
+  if (!t) return body;
+  let inFence = false;
+  let done = false;
+  return body.split("\n").map((line) => {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    if (!done && !inFence && /^#\s+/.test(line)) { done = true; return `# ${t}`; }
+    return line;
+  }).join("\n");
+}
+
+// marpThemeChoices lists the themes a deck can use: the server's central
+// catalog (Admin > Marp Themes; empty when the catalog is off) and the built-in
+// ones. `catalog` is null when the catalog could not be read.
+async function marpThemeChoices() {
+  let catalog = [];
+  try {
+    const res = await api("/api/marp/themes");
+    if (res.ok) {
+      const list = await res.json();
+      catalog = (Array.isArray(list) ? list : []).map((t) => {
+        const parsed = parseMarpTemplates(t.templates || "");
+        return { name: t.name, classes: marpThemeClasses(t.css), templates: parsed.templates.map((x) => x.name), _templates: parsed };
+      });
+    } else if (res.status !== 404) {
+      catalog = null;
+    }
+  } catch {
+    catalog = null;
+  }
+  const builtin = Object.entries(MARP_BUILTIN_THEMES).map(([name, classes]) => ({ name, classes }));
+  return { catalog, builtin };
+}
+
+function describeThemes({ catalog, builtin }) {
+  const fmt = (t) => {
+    const parts = [];
+    if (t.classes.length) parts.push(`classes: ${t.classes.join(", ")}`);
+    if (t.templates && t.templates.length) parts.push(`slide templates: ${t.templates.join(", ")}`);
+    return `${t.name}${parts.length ? ` (${parts.join("; ")})` : ""}`;
+  };
+  const lines = [];
+  if (catalog && catalog.length) lines.push(`Central themes (Admin > Marp Themes): ${catalog.map(fmt).join("; ")}`);
+  lines.push(`Built-in themes: ${builtin.map(fmt).join("; ")}`);
+  return lines.join("\n");
 }
 
 // splitMarp separates a Marp note into its leading YAML frontmatter and an
@@ -1652,21 +1772,83 @@ if (features.excalidraw) server.tool(
 );
 
 if (features.marp) server.tool(
+  "list_marp_themes",
+  "List the themes a Marp deck can use: the server's central themes (Admin > Marp Themes) and Marp's built-in themes, each with the slide classes it defines (for `class` or a slide's `<!-- _class: ... -->`) and, for central themes, its slide templates (one kind of slide each: title, cards, metrics…). Call it before create_marp and let the user choose the theme, and which templates to use.",
+  {},
+  async () => {
+    const choices = await marpThemeChoices();
+    const note = choices.catalog === null ? "\n(The central theme catalog could not be read.)" : "";
+    const json = JSON.stringify(choices, (k, v) => (k === "_templates" ? undefined : v));
+    return { content: [{ type: "text", text: describeThemes(choices) + note + "\n" + json }] };
+  }
+);
+
+if (features.marp) server.tool(
   "create_marp",
-  "Create a Marp slide-deck note. Scaffolds a `.md` note whose frontmatter carries `marp: true`, with slides separated by `---`. Provide `slides` (one markdown string per slide) or get a single title slide.",
+  "Create a Marp slide-deck note. Scaffolds a `.md` note whose frontmatter carries `marp: true`, with slides separated by `---`. Provide `slides` (one markdown string per slide) or get a single title slide. Before calling it, call list_marp_themes and ASK THE USER which theme to use (offer the server's central themes first). When the server has central themes, `theme` is required and must be one of the listed themes. To build the deck from the theme's slide templates, pass `templates`: [\"all\"] for one slide of every kind, or the template names the user wants; each becomes one slide with its own class, and the templates deck's front matter (html, class, footer…) is the starting point.",
   {
     namespace: z.string().describe("Namespace name"),
     path: z.string().describe("Path for the new deck (\".md\" appended if missing)"),
     title: z.string().optional().describe("Title for the default first slide (used when `slides` is omitted)"),
-    theme: z.string().optional().describe("Marp theme (default: default)"),
+    theme: z.string().optional().describe("Marp theme chosen by the user, from list_marp_themes. Required when the server has central themes; otherwise defaults to `default`"),
     paginate: z.boolean().optional().describe("Show slide numbers (default: true)"),
+    class: z.string().optional().describe("Slide class(es) for every slide, space-separated, as the theme defines them (e.g. \"invert\")"),
+    size: z.enum(["16:9", "4:3"]).optional().describe("Slide size (default: 16:9)"),
+    header: z.string().optional().describe("Header text on every slide"),
+    footer: z.string().optional().describe("Footer text on every slide"),
+    templates: z.array(z.string()).optional().describe("Slide templates of the theme to build the deck from (names from list_marp_themes), in order, or [\"all\"]. One slide each; `slides` are added after them"),
     slides: z.array(z.string()).optional().describe("Markdown body of each slide, in order"),
   },
-  async ({ namespace, path, title, theme, paginate, slides }) => {
+  async ({ namespace, path, title, theme, paginate, class: slideClass, size, header, footer, templates, slides }) => {
     try {
       let notePath = path;
       if (!notePath.endsWith(".md")) notePath += ".md";
-      const content = buildMarpDeck({ title, theme, paginate: paginate !== false, slides });
+      // The deck's theme is the user's choice: with a central catalog, refuse
+      // to guess, and refuse a name Marp would silently replace with `default`.
+      const choices = await marpThemeChoices();
+      if (choices.catalog) {
+        const known = [...choices.catalog.map((t) => t.name), ...choices.builtin.map((t) => t.name)];
+        if (theme === undefined && choices.catalog.length) {
+          return marpErr(`Ask the user which theme to use for this deck, then call create_marp again with \`theme\`. Nothing was created.\n${describeThemes(choices)}`);
+        }
+        if (theme !== undefined && !known.includes(theme)) {
+          return marpErr(`Unknown theme "${theme}". Nothing was created. Ask the user to pick one of:\n${describeThemes(choices)}`);
+        }
+      }
+      let opts = { title, theme, paginate: paginate !== false, slideClass, size, header, footer, slides };
+      if (templates && templates.length) {
+        const entry = (choices.catalog || []).find((t) => t.name === theme);
+        const tpl = entry?._templates;
+        if (!tpl || !tpl.templates.length) {
+          const withTpl = (choices.catalog || []).filter((t) => t.templates.length).map((t) => t.name);
+          return marpErr(`Theme "${theme ?? "default"}" has no slide templates. Nothing was created. ${withTpl.length ? `Themes with templates: ${withTpl.join(", ")}.` : "No theme has slide templates; omit \`templates\`."}`);
+        }
+        let picked;
+        if (templates.some((n) => n.toLowerCase() === "all")) {
+          picked = tpl.templates;
+        } else {
+          picked = [];
+          for (const n of templates) {
+            const t = tpl.templates.find((x) => x.name.toLowerCase() === n.toLowerCase());
+            if (!t) return marpErr(`Theme "${theme}" has no slide template "${n}". Nothing was created. Its templates: ${tpl.templates.map((x) => x.name).join(", ")}.`);
+            picked.push(t);
+          }
+        }
+        const fmv = (k) => tpl.frontmatter.find((f) => f.key === k)?.value;
+        const bodies = [...picked.map((t) => t.body), ...(Array.isArray(slides) ? slides : [])];
+        if (title) bodies[0] = marpWithTitle(bodies[0], title);
+        opts = {
+          theme,
+          slides: bodies,
+          slideClass: slideClass ?? fmv("class"),
+          paginate: paginate ?? fmv("paginate") !== "false",
+          size: size ?? fmv("size"),
+          header: header ?? fmv("header"),
+          footer: footer ?? fmv("footer"),
+          extraFrontmatter: tpl.frontmatter.filter((f) => !MARP_MANAGED_KEYS.includes(f.key)).map((f) => f.raw),
+        };
+      }
+      const content = buildMarpDeck(opts);
       const res = await api(
         `/api/note?ns=${encodeURIComponent(namespace)}&path=${encodeURIComponent(notePath)}`,
         { method: "POST", body: content }
@@ -1676,7 +1858,7 @@ if (features.marp) server.tool(
         return { content: [{ type: "text", text: `Error ${res.status}: ${t}` }], isError: true };
       }
       const data = await res.json().catch(() => ({}));
-      return { content: [{ type: "text", text: `Created deck ${notePath}\n${JSON.stringify(data)}` }] };
+      return { content: [{ type: "text", text: `Created deck ${notePath} (theme: ${theme || "default"})\n${JSON.stringify(data)}` }] };
     } catch (err) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
