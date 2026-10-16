@@ -6,6 +6,16 @@ All notable changes to mdnest are documented here.
 
 ## v4.8.9 (in progress)
 
+### Changed
+
+- **The README leads with the team-first pitch**
+  ([#143](https://github.com/mahsanamin/mdnest/pull/143)). It now opens with
+  "Your team and your AI agents, working from the same notes.", the same words
+  as mdnest.dev, then how a team and an agent work on one note and what team
+  mode adds. It says agents are optional and that mdnest includes no AI model,
+  and it marks comments and live collaboration as needing team setup. Multi-User
+  Mode now also explains how to switch on team mode from the plain compose file.
+
 ## v4.8.8: New slide decks from templates, a chat next to your note, and a much smaller first load
 
 "+ Slides" makes a new deck from your theme's slide templates, a chat can stay
