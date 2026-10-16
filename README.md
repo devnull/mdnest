@@ -1,17 +1,50 @@
 # mdnest
 
-**Your notes. On your server. Open in a browser, a terminal, or Claude.**
+**Your team and your AI agents, working from the same notes.**
 
-mdnest is a notes app you run yourself. Every note is an ordinary Markdown file
-in a folder you chose — so you can open it in mdnest, `grep` it from a terminal,
-or let an AI agent read and edit it, and it is always the same file.
+Self-hosted Markdown notes. Your team writes and comments in the browser, and
+your coding agents read and update the same notes through the CLI or MCP.
+Plain files, on your own server.
 
-No cloud account. No database to feed. Your notes stay on your machine.
+Stop pasting the same project context into every agent chat and every
+teammate's DM.
+
+Try it on your own machine first, then add your team. Requires Docker and
+Compose. AI agents are optional; connect your own.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dark-app.webp">
-  <img alt="The mdnest app: a folder tree on the left, and a note holding an editable table, a task list and a diagram, with a badge showing a colleague typing in the same note" src="docs/images/light-app.webp">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dark-hero-team.webp">
+  <img alt="The mdnest app with a team workspace open: a folder tree on the left, a project brief with a plan in the middle, and a teammate's comment beside one highlighted step" src="docs/images/light-hero-team.webp">
 </picture>
+
+<sub>A project brief in a team workspace, with a teammate's comment beside it (team setup).</sub>
+
+### How it works
+
+1. A teammate writes a project brief in mdnest.
+2. Your connected agent reads the brief and adds a plan to the note, through the `mdnest` CLI.
+3. Another teammate reviews the plan and leaves a comment beside it.
+
+Your team and your agent work with the same saved note. Comments need team
+setup. Alone, steps 1 and 2 work in the basic install.
+
+### Built for teams
+
+- 🔐 **Roles and access.** People only see the workspaces and folders they are
+  given, read-only or read-write. There are three role levels, and groups for
+  when the list gets long.
+- 🏢 **Sign in with your company login.** Connect your identity provider through
+  OIDC: Google Workspace, Okta, Microsoft Entra, Keycloak or Auth0. It keeps
+  handling MFA.
+- 💬 **Comments and presence.** Leave comment threads beside the text, and see
+  who else has the note open.
+- 🤖 **Shared and private chats with your agents.** Teammates and connected
+  agents talk in the same conversation, next to the notes they work on. A chat
+  can be private to the people you invite. You run your agents separately;
+  mdnest gives them a place to read and reply.
+
+Team features need team setup: a PostgreSQL database and a sign-in provider.
+See [Multi-User Mode](#multi-user-mode).
 
 ### Three ways in, one set of files
 
@@ -20,55 +53,61 @@ No cloud account. No database to feed. Your notes stay on your machine.
   <img alt="A browser, a terminal running the mdnest CLI, and an AI agent over MCP all connect to one mdnest server, which reads and writes plain .md files in your folder" src="docs/images/interfaces-light.webp">
 </picture>
 
-Most people find mdnest as a web app and never learn the rest. The **CLI** talks
-to *several servers at once* — `mdnest read @work/engineering/spec.md` and
-`mdnest append @home/journal/today.md "..."` from the same shell. The **MCP
-server** gives Claude or Cursor the same read and write access, so an agent has
-a memory that survives the session.
+People use the web app. Agents use the **CLI**, which talks to several servers
+at once (`mdnest read @work/engineering/spec.md` and
+`mdnest append @home/journal/today.md "..."` from the same shell), or the
+optional **MCP server**, which gives Claude or Cursor the same read and write
+access. Either way they change the same files your team does.
 
 ### What you get
 
-- 📝 **A real editor.** Markdown turns into rich text as you type — tables you
+- 📝 **A real editor.** Markdown turns into rich text as you type: tables you
   edit like a spreadsheet, diagrams from a code fence, math, drag-and-drop
   images. Or flip to plain text whenever you want.
-- 🗂️ **Folders, not one big pile.** Nest them as deep as you like, and keep
-  separate workspaces for work, home and side projects.
-- 👥 **Two people, one note.** See who else is in it, watch them type, and leave
-  comment threads anchored to the exact sentence.
-- 🤖 **Built for agents.** MCP and a CLI, both reading and writing the same
-  files you do.
-- ⚡ **Quick, because there is nothing in the way.** No import, no index to
-  rebuild. Search results and the task board are kept in memory.
-- 🛟 **Backs itself up.** Point a workspace at a git repo and mdnest commits and
-  pushes it on a schedule. Browse any note's history and restore a version from
-  inside the app.
-- 🚪 **No lock-in.** They are `.md` files. Walk away and take the folder.
+- 🗂️ **Folders, not one big pile.** Nest them as deep as you like, and keep a
+  separate workspace for each team or project.
+- 🤖 **Works with the agent you already use.** mdnest includes no AI model and
+  calls no AI service. Your agents use the `mdnest` CLI, or the optional MCP
+  server, on the same files you do.
+- 📄 **Plain files.** Every note is a `.md` file in a folder on your server.
+  Open it in any editor, `grep` it, or take the folder with you.
+- 🛟 **Optional git backup.** Point a workspace at a git repo and mdnest commits
+  and pushes it on a schedule. With it on, you can browse any note's history
+  and restore a version from inside the app.
+
+Your notes are stored as plain files on your server. Optional git backup and
+connected agents use the services you choose. A single user needs no
+database; team mode uses PostgreSQL for accounts and permissions only, never
+for your notes.
 
 ### Is it for you?
 
-- **You run AI agents** and want them to remember things between runs.
-- **You use more than one device** and want one set of notes on all of them.
-- **You are a small team** that wants a shared wiki without the Confluence bill.
+- **Your team keeps project knowledge in Markdown** and works with coding agents.
+- **You want a shared knowledge base without a per-seat bill**, with company
+  sign-in and per-folder access.
+- **You run AI agents** and want them to read and update the notes your team
+  already uses.
 
 > Just want a local vault on one Mac? [Obsidian](https://obsidian.md) is great.
-> Pick mdnest when you want your notes on every device, backed up, and open to
-> your AI.
+> Pick mdnest when your team and your agents need the same notes, on a server
+> you run.
 
 <sub>Handles 1,000–5,000 notes out of the box. Bigger? Tune the [search settings](#search) — config only. Full feature list in [More features](#more-features).</sub>
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- Git — only for the guided setup (option B below)
-- *Optional:* [Tailscale](https://tailscale.com/download) — free, **only** if you want encrypted remote access to your own devices later. Not needed to install or run mdnest.
+- [Docker](https://docs.docker.com/get-docker/) 20.10 or later, with [Docker Compose](https://docs.docker.com/compose/install/) v2
+- `curl` and `openssl`, and port 3236 free
+- For the guided setup (option B below) only: git, and Docker Compose 2.17 or later
+- *Optional:* [Tailscale](https://tailscale.com/download), **only** if you want encrypted remote access to your own devices later. Not needed to install or run mdnest.
 
 ## Quick Start
 
 ### 1. Set up the server
 
-Pick one. Both give you the same mdnest.
+Try it on your own machine first. Both options give you the same mdnest.
 
-**A. Plain Docker Compose: one file, nothing to build (fastest)**
+**A. Plain Docker Compose: one file, nothing to build (recommended)**
 
 ```bash
 mkdir mdnest && cd mdnest
@@ -84,6 +123,9 @@ Every optional setting is explained in a comment inside
 [`docker-compose.yml`](deploy/compose/docker-compose.yml), including how to
 put mdnest behind your own reverse proxy. There's also a
 [`docker run` version](docs/setup.md#plain-docker-compose-or-docker-run).
+
+Your basic setup is complete once you can create a note in the browser. Next,
+[connect your agent](docs/cli.md#install) and [add your team](#multi-user-mode).
 
 **B. Guided setup: a script writes the compose file for you**
 
@@ -269,7 +311,18 @@ For 10,000+ notes: set `SEARCH_WORKERS=16` and `SEARCH_CACHE_TTL=60`.
 
 By default, mdnest runs in **single-user mode** — one user, file-based auth, no database. Ideal for personal use.
 
-**Multi-user mode** adds a three-tier role hierarchy, per-namespace grants, optional 2FA, and your choice of three identity providers (corporate SSO, Firebase Auth, or local username/password). Set `AUTH_MODE=multi` in `mdnest.conf` and `setup.sh` adds a Postgres container automatically.
+**Multi-user mode** adds a three-tier role hierarchy, per-namespace grants, optional 2FA, and your choice of three identity providers (corporate SSO, Firebase Auth, or local username/password). How you switch it on depends on how you installed mdnest.
+
+**If you used the plain compose file (option A):** follow the commented
+"multi-user mode" block at the end of `docker-compose.yml`. Add the
+`AUTH_MODE` and `POSTGRES_*` lines to the backend's `environment`, add the
+`postgres` service and the `mdnest-pgdata` volume, put a `POSTGRES_PASSWORD`
+line in `.env`, and run `docker compose up -d`. Every setting below is an
+environment variable on the backend with the same name; see
+[docs/setup.md](docs/setup.md#multi-user-mode).
+
+**If you used the guided setup (option B):** set `AUTH_MODE=multi` in
+`mdnest.conf` and `setup.sh` adds a Postgres container automatically.
 
 It also turns on the parts that need more than one person. Open a note someone
 else has open and you can see them there, watch them type, and argue about a
@@ -421,8 +474,8 @@ tailscale serve off       # remove all rules
 Beyond the core editor and the three access interfaces, mdnest includes:
 
 - **Obsidian `[[wikilinks]]`.** Bring an Obsidian vault over as-is: `[[note]]`, `[[note|alias]]`, `[[note#heading]]`, and `[[#heading]]` resolve against your notes and open in-app — in both the preview and the Live editor. Broken links show muted so you can spot missing notes, and the markdown on disk stays literal `[[...]]`.
-- **Inline comments with threads.** Highlight any text and leave a comment; commented passages stay highlighted in yellow, and reviewers reply in a thread. Click a highlight to jump to the conversation. Comments are anchored to invisible UUIDs, so moving or renaming files keeps them attached.
-- **Live collaboration.** Multiple people editing the same note see each other's cursors and changes in real time over WebSocket. Toggle with `ENABLE_LIVE_COLLAB=true`.
+- **Inline comments with threads** *(needs team setup)*. Highlight any text and leave a comment; commented passages stay highlighted in yellow, and reviewers reply in a thread. Click a highlight to jump to the conversation. Comments are anchored to invisible UUIDs, so moving or renaming files keeps them attached.
+- **Live collaboration** *(needs team setup)*. People in the same note see each other there, and a teammate's changes appear in your open note over WebSocket when you have no unsaved edits of your own. Needs multi-user mode and `ENABLE_LIVE_COLLAB=true`.
 - **Task board from your notes.** Every `- [ ]` checkbox becomes a card on a per-namespace kanban board — with due dates, priorities, tags, sub-steps and descriptions written as an indented block in the note itself. Drag between columns, create and edit whole tasks from the board, scope it to one note or the whole workspace — and it's still just markdown on disk. Enable with `ENABLE_TASK_BOARD=true`. See [docs/tasks.md](docs/tasks.md).
 - **Chat in a note.** Turn any note into a chat channel with one frontmatter tag. People talk in it from a normal chat window, and agents talk from `mdnest chat post` / `mdnest chat wait` or MCP, so two Claude sessions can actually talk to each other, with you in the room. Every message is appended to the note as plain markdown. Each agent gets its own avatar, @mentions hand off work, and reaction images ship with mdnest. On by default (`ENABLE_CHAT=false` turns it off). See [docs/chat.md](docs/chat.md).
 
