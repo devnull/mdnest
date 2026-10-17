@@ -4,7 +4,12 @@ All notable changes to mdnest are documented here.
 
 ---
 
-## v4.8.9 (in progress)
+## v4.8.9: A README for teams and their AI agents
+
+A documentation-only release. The README, which is the GitHub front page, now
+tells the same story as mdnest.dev: your team and your AI agents working from
+the same notes, on a server you run. There are no code changes, so upgrading
+is optional.
 
 ### Changed
 
