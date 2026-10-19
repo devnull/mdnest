@@ -100,6 +100,13 @@ class CollabClient {
 
   disconnect() {
     this.closed = true;
+    // A trailing content send belongs to the note being left; sending it
+    // after connect() would put this note's text into the next note's room.
+    if (this._contentThrottle) {
+      clearTimeout(this._contentThrottle);
+      this._contentThrottle = null;
+    }
+    this._pendingContent = undefined;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -127,12 +134,23 @@ class CollabClient {
     this._send({ type: 'selection', fromLine, fromCh, toLine, toCh });
   }
 
-  // Send live content (throttled to every 200ms)
+  // Send live content, at most every 200ms. The LAST call inside a throttle
+  // window is always sent when the window closes: without that trailing send
+  // the final keystrokes of a burst never reached anyone else.
   sendContent(content) {
-    if (this._contentThrottle) return;
+    if (this._contentThrottle) {
+      this._pendingContent = content;
+      return;
+    }
     this._send({ type: 'content', content });
+    this._pendingContent = undefined;
     this._contentThrottle = setTimeout(() => {
       this._contentThrottle = null;
+      if (this._pendingContent !== undefined) {
+        const next = this._pendingContent;
+        this._pendingContent = undefined;
+        this.sendContent(next);
+      }
     }, 200);
   }
 

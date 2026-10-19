@@ -615,6 +615,16 @@ function App() {
   const collabRef = useRef(null);
   const typingTimers = useRef({}); // {userId: timeoutId}
   const localTypingUntil = useRef(0); // timestamp — local user is "typing" until this time
+  // The last text another user's live typing put on screen. Showing it is not
+  // an edit of ours: it must not count as unsaved work (or a later save by
+  // that user looks like a conflict), and it is never the base we save on.
+  const remoteLiveRef = useRef(null);
+  // Whether this tab holds edits of its own that are not saved yet.
+  const hasLocalEdits = useCallback(() => {
+    const cur = (contentRef.current || '').trim();
+    if (cur === (savedContentRef.current || '').trim()) return false;
+    return remoteLiveRef.current === null || cur !== remoteLiveRef.current.trim();
+  }, []);
   const pollPathRef = useRef(null); // tracks current file for stale poll detection
   const treeRefreshTimer = useRef(null); // debounce for tree-changed events
 
@@ -857,14 +867,16 @@ function App() {
   // selection (the cursor "jumps").
   const handleFileChanged = useCallback((msg) => {
     if (echoGate.check(msg, etagRef.current) !== 'process') return;
-    // Another user saved (or restored) — update etag and reload if
-    // no local edits. Restores get a separate "info" banner instead
-    // of the yellow conflict banner; same auto-reload-when-clean
-    // path otherwise.
-    etagRef.current = msg.etag;
+    // Another user saved (or restored). Reload if this tab has no edits of
+    // its own. Restores get a separate "info" banner instead of the yellow
+    // conflict banner; same auto-reload-when-clean path otherwise.
+    //
+    // The new etag is adopted ONLY together with the text it belongs to. A
+    // tab with unsaved edits keeps its old etag, so its next save is refused
+    // (409) and the 409 path decides honestly. Taking the etag here let that
+    // save overwrite the other person's work without a word.
     const isRestore = msg.reason === 'restored';
-    const isClean = (contentRef.current || '').trim() === (savedContentRef.current || '').trim();
-    if (isClean) {
+    if (!hasLocalEdits()) {
       setConflictBanner(null);
       const ns = selectedNsRef.current;
       const path = currentPathRef.current;
@@ -873,6 +885,7 @@ function App() {
           if (selectedNsRef.current === ns && currentPathRef.current === path) {
             setContent(text);
             setSavedContent(text);
+            remoteLiveRef.current = null;
             etagRef.current = etag;
             // Remount the drawing canvas so it shows the remote scene, not the
             // stale one it was mounted with.
@@ -923,12 +936,15 @@ function App() {
             setTypingUsers((prev) => { const n = { ...prev }; delete n[msg.userId]; return n; });
           }, 2000);
           // Apply remote content ONLY if local user is idle (no unsaved changes and not typing)
-          if (Date.now() < localTypingUntil.current || (contentRef.current || '').trim() !== (savedContentRef.current || '').trim()) {
+          if (Date.now() < localTypingUntil.current || hasLocalEdits()) {
             // Local user has edits — don't overwrite. They'll sync via save + file-changed.
             break;
           }
+          // Shown, not saved: savedContent stays the text on disk, so the
+          // next edit's base and the 409 check stay true.
+          remoteLiveRef.current = msg.content;
+          contentRef.current = msg.content;
           setContent(msg.content);
-          setSavedContent(msg.content);
           break;
         case 'tree-changed':
           // Debounce tree refresh — multiple rapid tree-changed events
@@ -974,6 +990,7 @@ function App() {
       return;
     }
     collabRef.current.connect(selectedNs, currentPath);
+    remoteLiveRef.current = null;
     presenceHold.current.reset();
     setPresenceUsers([]);
     setRemoteCursors({});
@@ -1160,14 +1177,16 @@ function App() {
 
         if (remote === savedContentRef.current) return; // no change
 
-        if (contentRef.current === savedContentRef.current) {
+        if (!hasLocalEdits()) {
           // No local unsaved changes — silently update
           setContent(remote);
           setSavedContent(remote);
+          remoteLiveRef.current = null;
           etagRef.current = etag;
         } else {
-          // User has unsaved changes AND file changed externally — show conflict
-          etagRef.current = etag;
+          // User has unsaved changes AND file changed externally — show
+          // conflict. Keep the old etag (see handleFileChanged): the next
+          // save must be refused, not silently win.
           setConflictBanner({ username: 'an external source' });
         }
       } catch (e) {
@@ -1690,8 +1709,10 @@ function App() {
       if (seq !== saveSeqRef.current) return; // a newer save will write all of this
       if (newContent === savedContentRef.current) return; // nothing new to write
       // What this edit was made on top of: the text we last saved or were
-      // handed (a load, a remote save, someone's live typing).
+      // handed (a load, a remote save), or someone's live typing we were
+      // showing when we started to type (shown, never saved as ours).
       const base = savedContentRef.current;
+      const shownRemote = remoteLiveRef.current;
       if (!currentPath || !selectedNs) return;
       // Safety against destructive autosave: never write empty content
       // when we know the file had content when we loaded it. This is the
@@ -1720,7 +1741,7 @@ function App() {
               resolved = true;
               setSavedContent(newContent);
               etagRef.current = latest.etag;
-            } else if (latest.text === base) {
+            } else if (latest.text === base || (shownRemote !== null && latest.text === shownRemote)) {
               // The server holds exactly what this edit was built on (we had
               // already seen that text, e.g. through someone's live typing,
               // only its etag was newer). Nothing of theirs is lost by
@@ -2298,6 +2319,7 @@ function App() {
       const { text, etag } = await getNote(selectedNs, currentPath);
       setContent(text);
       setSavedContent(text);
+      remoteLiveRef.current = null;
       etagRef.current = etag;
       setDrawingReloadKey((k) => k + 1);
       setConflictBanner(null);
