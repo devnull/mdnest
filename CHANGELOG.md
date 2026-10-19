@@ -4,6 +4,8 @@ All notable changes to mdnest are documented here.
 
 ---
 
+## v4.8.11 (in progress)
+
 ## v4.8.10: Shared editing, and no more lost typing when two people edit a note
 
 Fixes an old and serious bug: when two people edited the same note, typing
