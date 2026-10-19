@@ -454,6 +454,12 @@ func main() {
 			}
 		}
 		log.Println("live collaboration enabled (WebSocket)")
+		if collab.SharedEditingEnabled(env("SHARED_EDITING", ""), env("MDNEST_ROLE", "single")) {
+			collabHub.EnableSharedEditing()
+			log.Println("shared editing enabled (Yjs rooms, single box)")
+		} else {
+			log.Println("shared editing off (SHARED_EDITING=false or MDNEST_ROLE=app): notes use whole-file saves")
+		}
 	}
 
 	nsHandler := handlers.NewNamespaceHandler(stg, perms, workspaceStore)
@@ -524,6 +530,7 @@ func main() {
 		searchHandler.InvalidateCache(ns)
 		if collabHub != nil {
 			collabHub.BroadcastTreeChanged(ns)
+			closeMovedRooms(collabHub, stg, ns)
 		}
 	})
 	transferHandler.SetConcurrency(downloadMaxConcurrent)
@@ -642,6 +649,7 @@ func main() {
 				searchHandler.InvalidateCache(ns)
 				if collabHub != nil {
 					collabHub.BroadcastTreeChanged(ns)
+					closeMovedRooms(collabHub, stg, ns)
 				}
 			}
 		})
@@ -673,6 +681,7 @@ func main() {
 	}
 
 	configHandler := handlers.NewConfigHandler(authMode, enableCollab, serverAlias, require2FA)
+	configHandler.SetSharedEditing(collabHub.SharedEditing())
 	configHandler.SetGrantMaxDepth(grantMaxDepth)
 	configHandler.SetTaskBoard(enableTaskBoard)
 	configHandler.SetMarp(enableMarp)
@@ -1058,4 +1067,15 @@ func logNamespacesAtStartup(ctx context.Context, stg storage.Storage, notesDir s
 		"e.g. \"./notes:%s/notes\" under the backend service's volumes (not the frontend's). Files placed directly in %s are not in any namespace. "+
 		"If the folder exists on the host but looks empty here, Docker cannot see it: on Docker Desktop add it under Settings > Resources > File sharing; on an SELinux host (Fedora, RHEL) add :z to the volume.",
 		notesDir, notesDir, notesDir, notesDir)
+}
+
+// closeMovedRooms closes the shared editing rooms in ns whose note is gone
+// (moved, renamed, deleted), after any mutating request in that namespace.
+// Their people fall back to the missing-note notice, and no saver writes to
+// the old path again.
+func closeMovedRooms(hub *collab.Hub, stg storage.Storage, ns string) {
+	hub.CloseMissingRooms(ns, func(p string) bool {
+		_, err := stg.Stat(context.Background(), ns, p)
+		return err == nil
+	})
 }

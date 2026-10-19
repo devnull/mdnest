@@ -345,6 +345,23 @@ export async function saveNote(ns, path, content, ifMatch, opts = {}) {
   return res.json();
 }
 
+// A save sent while the page is going away (pagehide). `keepalive` lets the
+// request outlive the page, but browsers cap a keepalive body at 64 KB; a
+// bigger note is still sent, without the flag, and may be cut off by the
+// unload. Fire and forget: nobody is left to read the answer.
+export function saveNoteOnLeave(ns, path, content, ifMatch) {
+  const headers = {};
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (ifMatch) headers['If-Match'] = ifMatch;
+  const keepalive = new Blob([content]).size < 60 * 1024;
+  try {
+    fetch(`${BASE}/note?ns=${encodeURIComponent(ns)}&path=${encodeURIComponent(path)}`, {
+      method: 'PUT', headers, body: content, keepalive,
+    }).catch(() => {});
+  } catch { /* page is going away */ }
+}
+
 // Explicit "make this file empty" action. Bypasses the backend's refuse-to-
 // truncate-to-empty guard via ?allow-empty=1. Use this for deliberate clear
 // operations (e.g. a context-menu "Clear note" item); never for autosave.

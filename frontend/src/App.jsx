@@ -76,6 +76,7 @@ import CollabClient from './collab.js';
 import { normalizeBoard } from './stickies.js';
 import { isMarpDoc, effectiveEditorMode } from './marp.js';
 import { isExcalidrawDoc } from './excalidraw.js';
+import { isSharedEligible } from './sharedEligible.js';
 import { TREE_POLL_MS, shouldPollTree } from './tree-refresh.js';
 import {
   getToken,
@@ -270,6 +271,8 @@ function App() {
   // Callers must flush BEFORE loading the next note: etagRef is shared, so a
   // save that ran afterwards would send the new file's etag with the old
   // file's content.
+  // The open note's shared editing session (sharedDoc.js), when there is one.
+  const sharedRef = useRef(null);
   const flushPendingSave = useCallback(async () => {
     // First let the active editor hand over anything it is still debouncing.
     // It calls handleContentChange synchronously, which queues the save we
@@ -279,6 +282,10 @@ function App() {
     const pending = pendingSaveRef.current;
     pendingSaveRef.current = null;
     if (pending) await pending();
+    // In a shared note the saver writes the room's text now.
+    if (sharedRef.current) {
+      try { await sharedRef.current.flush(); } catch { /* reported by the session */ }
+    }
   }, []);
   const [sidebarVisible, setSidebarVisible] = useState(false);
   // Bumped by the toolbar "reveal in tree" button; Sidebar watches it to expand
@@ -506,7 +513,7 @@ function App() {
   // heading), which silently turns the chat back into a plain note. So when
   // one is opened as a note, it is locked to Basic exactly like Marp.
   const chatNoteActive = chatEnabled && isChatDoc(content);
-  const editorModeForNote = effectiveEditorMode(editorMode, marpActive || drawingSource || chatNoteActive);
+  const editorModeChosen = effectiveEditorMode(editorMode, marpActive || drawingSource || chatNoteActive);
   // `.excalidraw.md` files open in the drawing editor (opt-in ENABLE_EXCALIDRAW),
   // bypassing the text editor/preview entirely.
   const excalidrawEnabled = !!appConfig?.excalidraw;
@@ -527,6 +534,8 @@ function App() {
 
   // Live collaboration state
   const [presenceUsers, setPresenceUsers] = useState([]);
+  const presenceUsersRef = useRef(presenceUsers);
+  presenceUsersRef.current = presenceUsers;
   // Presence is held for a few seconds before a departure is believed, so a
   // reconnect or a snapshot racing a join doesn't flicker someone out and
   // straight back in. See presence-hold.js.
@@ -603,6 +612,24 @@ function App() {
   const [showApprovals, setShowApprovals] = useState(false);
   const [dismissedReleaseVer, setDismissedReleaseVer] = useState(() => localStorage.getItem('mdnest_dismissed_release_version') || '');
   const [wsStatus, setWsStatus] = useState('disconnected'); // 'connected' | 'connecting' | 'disconnected'
+
+  // Shared editing (Yjs, sharedDoc.js). A plain markdown note opened in Live
+  // with ENABLE_LIVE_COLLAB on is edited through one shared document per
+  // note; one tab in the room saves it. Drawings, chats and Marp decks keep
+  // the whole-file path. In Basic mode, alone, the old path runs; as soon as
+  // someone else is in the note it switches to Live, because a textarea
+  // saving its own copy would fight the room.
+  const sharedEditingOn = !!appConfig?.sharedEditing;
+  const noteLoaded = content !== null;
+  const sharedEligible = sharedEditingOn && noteLoaded
+    && isSharedEligible({ path: currentPath, isDrawing: isDrawingDoc, isChat: chatNoteActive, isMarp: marpActive });
+  const othersInNote = presenceUsers.some((u) => u.id !== userInfo?.id);
+  const sharedForcesLive = sharedEligible && othersInNote && liveCrashedFor !== currentPath;
+  const editorModeForNote = sharedForcesLive ? 'live' : editorModeChosen;
+  const wantShared = sharedEligible && editorModeForNote === 'live' && liveCrashedFor !== currentPath;
+  const [sharedSession, setSharedSession] = useState(null);
+  const [sharedBound, setSharedBound] = useState(false);
+  const [sharedDisabled, setSharedDisabled] = useState(false);
   const etagRef = useRef(null);
   // Echo gate: recognizes the file-changed echoes of this tab's own saves so
   // they never raise a self-conflict banner. The backend broadcasts BEFORE it
@@ -910,6 +937,11 @@ function App() {
   useEffect(() => {
     if (!appConfig?.liveCollab) return;
     const client = new CollabClient((msg) => {
+      const shared = sharedRef.current && !sharedRef.current.closed ? sharedRef.current : null;
+      if (typeof msg.type === 'string' && msg.type.startsWith('yjs-')) {
+        if (shared) shared.onControl(msg);
+        return;
+      }
       switch (msg.type) {
         case 'presence':
           presenceHold.current.setAll(msg.users || []);
@@ -921,13 +953,20 @@ function App() {
         case 'selection':
           setRemoteCursors((prev) => ({ ...prev, [msg.userId]: { ...msg, type: 'selection' } }));
           break;
+        case 'join':
+          if (shared) shared.announce();
+          break;
         case 'leave':
+          if (shared) shared.forgetUser(msg.userId);
           setRemoteCursors((prev) => { const n = { ...prev }; delete n[msg.userId]; return n; });
           setTypingUsers((prev) => { const n = { ...prev }; delete n[msg.userId]; return n; });
           presenceHold.current.remove(msg.userId);
           applyPresence();
           break;
         case 'content':
+          // The whole-document live text belongs to the old path; a shared
+          // note's text arrives through the room.
+          if (shared) break;
           // Mark user as typing
           setTypingUsers((prev) => ({ ...prev, [msg.userId]: msg.username }));
           // Clear typing after 2s of silence
@@ -964,6 +1003,12 @@ function App() {
           }, 1000);
           break;
         case 'file-changed':
+          if (shared) {
+            // The room's saver merges outside changes; nobody reloads.
+            shared.onFileChanged(msg);
+            if (msg.reason === 'restored') setRestoreBanner({ username: msg.username, ref: msg.restoreFromRef });
+            break;
+          }
           handleFileChanged(msg);
           break;
       }
@@ -1000,6 +1045,107 @@ function App() {
     // note — drop them rather than replaying them against this one.
     echoGate.reset();
   }, [selectedNs, currentPath]);
+
+  // Start (or end) the shared editing session for the open note. The Yjs
+  // code is a separate chunk, loaded only here, so an install without live
+  // collab never downloads it.
+  const sharedKey = wantShared ? `${selectedNs}\n${currentPath}` : null;
+  const handleSharedEvent = useCallback((ev) => {
+    switch (ev.type) {
+      case 'bound':
+        setSharedBound(true);
+        break;
+      case 'saved':
+        // Keep the old path's view of the file current, for a later switch
+        // back to it (Basic alone, or shared editing ending).
+        if (ev.etag) etagRef.current = ev.etag;
+        break;
+      case 'missing':
+      case 'closed':
+        setSharedDisabled(true);
+        setMissingNote({ ns: selectedNsRef.current, path: currentPathRef.current });
+        break;
+      case 'error':
+        setSharedDisabled(true);
+        setNotice({
+          kind: 'error',
+          text: ev.error === 'room-full'
+            ? 'Too many people are in this note to edit it together. It is read-only for you; reload to try again.'
+            : ev.error === 'no-write'
+              ? 'You can no longer save this note.'
+              : 'Shared editing stopped for this note (it grew too large). Reload to continue.',
+        });
+        break;
+      default:
+    }
+  }, []);
+  useEffect(() => {
+    if (!sharedKey || !collabRef.current) return undefined;
+    let cancelled = false;
+    let session = null;
+    setSharedBound(false);
+    setSharedDisabled(false);
+    (async () => {
+      // Anything the old path still had queued for this note is written
+      // first, so the room starts from the file.
+      await flushPendingSave();
+      let mod;
+      try {
+        mod = await loadWithRetry(() => import('./sharedDoc.js'));
+      } catch (e) {
+        console.error('mdnest: could not load shared editing', e);
+        return;
+      }
+      if (cancelled || !collabRef.current) return;
+      const me = userInfo ? (presenceUsersRef.current || []).find((u) => u.id === userInfo.id) : null;
+      session = new mod.SharedSession({
+        client: collabRef.current,
+        ns: selectedNsRef.current,
+        path: currentPathRef.current,
+        initialText: contentRef.current || '',
+        initialBase: savedContentRef.current || '',
+        initialEtag: etagRef.current,
+        canWrite: canWriteCurrent,
+        user: { id: userInfo?.id, name: userInfo?.username || 'someone', color: me?.color || '#89b4fa' },
+        onEvent: handleSharedEvent,
+      });
+      sharedRef.current = session;
+      setSharedSession(session);
+    })();
+    return () => {
+      cancelled = true;
+      if (session) {
+        // Navigation already flushed it (flushPendingSave); a switch to Basic
+        // alone saves what is pending before the session goes.
+        const s = session;
+        s.leave();
+        s.flush().catch(() => {}).finally(() => s.destroy());
+      }
+      sharedRef.current = null;
+      setSharedSession(null);
+      setSharedBound(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedKey, canWriteCurrent]);
+
+  // Our cursor colour comes from the presence list (the server picks it).
+  useEffect(() => {
+    if (!sharedSession || !userInfo) return;
+    const me = presenceUsers.find((u) => u.id === userInfo.id);
+    sharedSession.setUser({ id: userInfo.id, name: userInfo.username, color: me?.color || '#89b4fa' });
+  }, [sharedSession, presenceUsers, userInfo]);
+
+  // Editor reports in a shared note: only mirror the text for the preview,
+  // outline and comments. Saving is the session's job.
+  const handleSharedChange = useCallback((body) => {
+    const s = sharedRef.current;
+    if (!s) return;
+    const full = s.withFrontMatter(body);
+    contentRef.current = full;
+    savedContentRef.current = full;
+    setContent(full);
+    setSavedContent(full);
+  }, []);
 
   const loadNamespaces = useCallback(async () => {
     try {
@@ -1169,6 +1315,9 @@ function App() {
     pollPathRef.current = myPollKey;
 
     const interval = setInterval(async () => {
+      // A shared note's saver checks the file itself (file-changed, and on
+      // every 409); reloading here would replace the room's text.
+      if (sharedRef.current) return;
       try {
         const { text: remote, etag } = await getNote(selectedNs, currentPath);
 
@@ -2472,6 +2621,7 @@ function App() {
           mobileView={mobileView}
           onMobileViewChange={isMobile && currentPath && !excalidrawActive && !showTaskBoard && !chatsOpen ? (v) => { setMobileView(v); localStorage.setItem('mdnest_mobile_view', v); } : null}
           liveLockReason={chatNoteActive && !marpActive ? 'Disabled for chats — the rich editor would rewrite the chat tag and turn it back into a plain note' : null}
+          basicLockReason={sharedForcesLive ? 'Others are editing this note: it stays in Live so everyone edits the same text' : null}
           onSetBoardActive={taskBoardEnabled && selectedNs ? setBoardActive : null}
           onSetChatsActive={chatEnabled ? setChatsActive : null}
           chatsBackLabel={chatsBackLabel}
@@ -2662,14 +2812,21 @@ function App() {
             <>
               {/* The phone's Edit/Preview switch lives in the toolbar now, as
                   the third option of Basic | Live | Preview. */}
-              {(isMobile ? mobileView === 'editor' : viewMode !== 'preview') && (
+              {/* A shared note keeps its editor mounted (hidden) in preview:
+                  the editor is what turns the shared document into markdown,
+                  so without it this tab could not save for the room. */}
+              {((isMobile ? mobileView === 'editor' : viewMode !== 'preview') || (wantShared && editorModeForNote === 'live')) && (
                 <div
                   ref={editorWrapperRef}
                   className={`editor-wrapper${mobileView === 'editor' ? ' mobile-active' : ''}`}
-                  style={!isMobile && viewMode === 'split' ? { flex: `0 0 ${splitRatio}%` } : undefined}
+                  style={!(isMobile ? mobileView === 'editor' : viewMode !== 'preview')
+                    ? { display: 'none' }
+                    : (!isMobile && viewMode === 'split' ? { flex: `0 0 ${splitRatio}%` } : undefined)}
                 >
                   {content === null ? (
                     <div className="editor-loading">Loading note…</div>
+                  ) : editorModeForNote === 'live' && wantShared && !sharedSession ? (
+                    <div className="editor-loading">Joining the shared note…</div>
                   ) : editorModeForNote === 'live' ? (
                     <EditorErrorBoundary
                       resetKey={`${selectedNs}/${currentPath}`}
@@ -2690,10 +2847,14 @@ function App() {
                             contains the moment-the-prop-was-empty (because we only
                             mount once content is a real string). */}
                         <LiveEditor
-                            key={`${selectedNs}/${currentPath}`}
+                            key={sharedSession ? `${selectedNs}/${currentPath}#shared${sharedSession.id}` : `${selectedNs}/${currentPath}`}
                             content={content}
-                            onChange={canWriteCurrent ? handleContentChange : null}
-                            readOnly={!canWriteCurrent}
+                            shared={sharedSession}
+                            onChange={sharedSession ? handleSharedChange : (canWriteCurrent ? handleContentChange : null)}
+                            // Shared: editable once the room's document is
+                            // bound. Typing into the unbound placeholder
+                            // would go nowhere.
+                            readOnly={!canWriteCurrent || (sharedSession && (!sharedBound || sharedDisabled))}
                             ns={selectedNs}
                             currentPath={currentPath}
                             comments={commentsEnabled ? comments : []}

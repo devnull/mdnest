@@ -39,6 +39,11 @@ type Hub struct {
 	// instances (noteKey -> peer instance id -> that peer's user-set).
 	rmu    sync.Mutex
 	remote map[string]map[string]remotePresence
+
+	// Shared editing (Yjs) rooms, see yjs.go. shared is set once at startup.
+	shared bool
+	ymu    sync.Mutex
+	rooms  map[string]*yjsRoom
 }
 
 // remotePresence is a peer instance's advertised user-set for a note, with an
@@ -63,6 +68,7 @@ func NewHub() *Hub {
 		id:     newInstanceID(),
 		bp:     nopBackplane{},
 		remote: make(map[string]map[string]remotePresence),
+		rooms:  make(map[string]*yjsRoom),
 	}
 }
 
@@ -111,6 +117,10 @@ type IncomingMessage struct {
 	ToLine    int    `json:"toLine,omitempty"`
 	ToCh      int    `json:"toCh,omitempty"`
 	Content   string `json:"content,omitempty"`
+	// yjs-saved: the highest room seq the saver had applied, and how many
+	// of its own updates it had sent, when it took the text it saved.
+	Recv uint64 `json:"recv,omitempty"`
+	Own  int    `json:"own,omitempty"`
 }
 
 type OutgoingMessage struct {

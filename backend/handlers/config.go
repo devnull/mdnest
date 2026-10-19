@@ -32,6 +32,7 @@ var bootID = strconv.FormatInt(time.Now().UnixNano(), 36)
 type ConfigHandler struct {
 	authMode        string
 	liveCollab      bool
+	sharedEditing   bool // Yjs shared editing rooms are on (live collab, single box)
 	serverAlias     string
 	require2FA      bool
 	userProvider    string                 // "local" | "firebase" | "sso"
@@ -60,6 +61,9 @@ func NewConfigHandler(authMode string, liveCollab bool, serverAlias string, requ
 		userProvider: "local",
 	}
 }
+
+// SetSharedEditing reports whether notes are edited through shared Yjs rooms.
+func (h *ConfigHandler) SetSharedEditing(on bool) { h.sharedEditing = on }
 
 // SetFirebase tells the config handler that federated identity is on and
 // supplies the web-side Firebase config the frontend needs to init its SDK.
@@ -171,15 +175,16 @@ func (h *ConfigHandler) HandleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]interface{}{
-		"authMode":     h.authMode,
-		"liveCollab":   h.liveCollab,
-		"require2FA":   h.require2FA,
-		"userProvider": h.userProvider,
-		"version":      "4.8.10-dev",
-		"commit":       Commit,
-		"buildTime":    BuildTime,
-		"defaultTheme": h.defaultThemeOrAuto(),
-		"bootId":       bootID,
+		"authMode":      h.authMode,
+		"liveCollab":    h.liveCollab,
+		"sharedEditing": h.liveCollab && h.sharedEditing,
+		"require2FA":    h.require2FA,
+		"userProvider":  h.userProvider,
+		"version":       "4.8.10-dev",
+		"commit":        Commit,
+		"buildTime":     BuildTime,
+		"defaultTheme":  h.defaultThemeOrAuto(),
+		"bootId":        bootID,
 	}
 	if h.serverAlias != "" {
 		resp["serverAlias"] = h.serverAlias

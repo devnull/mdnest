@@ -18,6 +18,10 @@ class CollabClient {
     this._cursorThrottle = null;
     this._status = 'disconnected';
     this._connId = 0; // incremented on each connect, used to discard stale onclose
+    // Shared editing (sharedDoc.js) attaches here: binary frames go to
+    // onBinary, and onOpen runs after every (re)connect so the room is joined
+    // again. One shared session at a time, the one for the open note.
+    this.shared = null; // { onBinary(u8), onOpen() }
   }
 
   _setStatus(status) {
@@ -51,6 +55,7 @@ class CollabClient {
 
     try {
       this.ws = new WebSocket(url);
+      this.ws.binaryType = 'arraybuffer';
     } catch (e) {
       this._setStatus('disconnected');
       this._scheduleReconnect();
@@ -60,9 +65,14 @@ class CollabClient {
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;
       this._setStatus('connected');
+      if (this.shared) this.shared.onOpen();
     };
 
     this.ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        if (this.shared) this.shared.onBinary(new Uint8Array(e.data));
+        return;
+      }
       try {
         const msg = JSON.parse(e.data);
         if (this.onMessage) this.onMessage(msg);
@@ -158,6 +168,20 @@ class CollabClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
+  }
+
+  // Shared editing: a JSON control message or a binary Yjs frame. Returns
+  // false when the socket is not open (the session resyncs on reconnect).
+  sendJSON(msg) {
+    if (!this.connected) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
+  }
+
+  sendBinary(u8) {
+    if (!this.connected) return false;
+    this.ws.send(u8);
+    return true;
   }
 
   get connected() {

@@ -421,7 +421,10 @@ export const wikilinkDecorationPlugin = $prose(() => {
 
 // ===== LiveToolbar — persistent top toolbar =====
 
-export function LiveToolbar({ editor, handlesHidden, onToggleHandles }) {
+// undoRedo: { undo, redo } ProseMirror commands from the shared session; when
+// set, Undo and Redo go to the per-person Yjs undo manager instead of the
+// editor history (which is off in a shared note).
+export function LiveToolbar({ editor, handlesHidden, onToggleHandles, undoRedo }) {
   if (!editor) return null;
   const cmd = (command, payload) => {
     try {
@@ -467,10 +470,10 @@ export function LiveToolbar({ editor, handlesHidden, onToggleHandles }) {
         </>
       )}
       <div className="live-toolbar-group">
-        <button onPointerDown={(e) => { e.preventDefault(); cmd(undoCommand); }} title="Undo (Cmd/Ctrl+Z)" aria-label="Undo">
+        <button onPointerDown={(e) => { e.preventDefault(); if (undoRedo) proseCmd(undoRedo.undo); else cmd(undoCommand); }} title="Undo (Cmd/Ctrl+Z)" aria-label="Undo">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>
         </button>
-        <button onPointerDown={(e) => { e.preventDefault(); cmd(redoCommand); }} title="Redo (Cmd/Ctrl+Shift+Z)" aria-label="Redo">
+        <button onPointerDown={(e) => { e.preventDefault(); if (undoRedo) proseCmd(undoRedo.redo); else cmd(redoCommand); }} title="Redo (Cmd/Ctrl+Shift+Z)" aria-label="Redo">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/></svg>
         </button>
       </div>

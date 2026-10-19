@@ -2,7 +2,6 @@ package collab
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"time"
 
@@ -24,6 +23,9 @@ type Conn struct {
 	ReadOnly bool
 	ws       *websocket.Conn
 	send     chan []byte
+	// dropped is set when a reliable send could not be queued; the
+	// connection is closed so the client reconnects and syncs again.
+	dropped bool
 }
 
 // NewConn creates a new connection wrapper.
@@ -35,7 +37,7 @@ func NewConn(ws *websocket.Conn, userID int, username string) *Conn {
 			Color:    colorForUser(userID),
 		},
 		ws:   ws,
-		send: make(chan []byte, 64),
+		send: make(chan []byte, 256),
 	}
 }
 
@@ -53,36 +55,39 @@ func (c *Conn) Send(data []byte) {
 	}
 }
 
+// SendReliable queues a message that must not be lost (a Yjs frame). If the
+// buffer is full the connection is closed instead of dropping the message:
+// a document missing one update stays wrong, while a reconnect fetches the
+// whole room again.
+func (c *Conn) SendReliable(data []byte) {
+	select {
+	case c.send <- data:
+	default:
+		if !c.dropped {
+			c.dropped = true
+			log.Printf("collab: send buffer full for %s; closing so it resyncs", c.User.Username)
+			if c.ws != nil {
+				go c.ws.Close(websocket.StatusTryAgainLater, "too slow, reconnect")
+			}
+		}
+	}
+}
+
 // ReadLoop reads messages from the client and dispatches them.
 // Blocks until the connection is closed.
 func (c *Conn) ReadLoop(ctx context.Context, hub *Hub, ns, path string) {
 	defer func() {
+		hub.YjsLeave(ns, path, c)
 		hub.Leave(ns, path, c)
 		c.ws.Close(websocket.StatusNormalClosure, "")
 	}()
 
 	for {
-		_, data, err := c.ws.Read(ctx)
+		typ, data, err := c.ws.Read(ctx)
 		if err != nil {
 			return // Connection closed
 		}
-
-		if c.ReadOnly {
-			continue
-		}
-		var msg IncomingMessage
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-
-		switch msg.Type {
-		case "cursor":
-			hub.BroadcastCursor(ns, path, c, msg)
-		case "selection":
-			hub.BroadcastSelection(ns, path, c, msg)
-		case "content":
-			hub.BroadcastContent(ns, path, c, msg.Content)
-		}
+		hub.HandleMessage(ns, path, c, typ == websocket.MessageBinary, data)
 	}
 }
 
@@ -98,7 +103,7 @@ func (c *Conn) WriteLoop(ctx context.Context) {
 				return
 			}
 			writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-			err := c.ws.Write(writeCtx, websocket.MessageText, data)
+			err := c.ws.Write(writeCtx, frameType(data), data)
 			cancel()
 			if err != nil {
 				return
@@ -115,4 +120,15 @@ func (c *Conn) WriteLoop(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// frameType picks the websocket message type for a queued message. JSON
+// starts with '{'; a shared editing frame starts with its tag byte (1 to 4),
+// and must go out as binary: a browser fails the whole connection on a text
+// frame that is not valid UTF-8.
+func frameType(data []byte) websocket.MessageType {
+	if len(data) > 0 && data[0] < 0x20 {
+		return websocket.MessageBinary
+	}
+	return websocket.MessageText
 }
