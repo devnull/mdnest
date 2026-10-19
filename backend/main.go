@@ -456,6 +456,10 @@ func main() {
 		log.Println("live collaboration enabled (WebSocket)")
 		if collab.SharedEditingEnabled(env("SHARED_EDITING", ""), env("MDNEST_ROLE", "single")) {
 			collabHub.EnableSharedEditing()
+			collabHub.SetNoteExists(func(ns, p string) bool {
+				_, err := stg.Stat(context.Background(), ns, p)
+				return err == nil
+			})
 			log.Println("shared editing enabled (Yjs rooms, single box)")
 		} else {
 			log.Println("shared editing off (SHARED_EDITING=false or MDNEST_ROLE=app): notes use whole-file saves")

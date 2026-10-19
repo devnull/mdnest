@@ -169,3 +169,129 @@ test('opening a shared note and leaving without typing does not change the file'
   expect(await readNote(pageA, file), 'the file changed although nobody typed').toBe(before);
   await b.close(); await a.close();
 });
+
+test('the saver closing the tab right after typing does not lose the text', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { a, b, pageA, pageB } = await setup(browser);
+  const file = `collab-leave-${Date.now()}.md`;
+  await putNote(pageA, file, '# Leave\n\nkeep this line\n');
+
+  // A opens first, so A seeds the room and is its saver.
+  await openInLive(pageA, file);
+  await pageA.waitForTimeout(1500);
+  await openInLive(pageB, file);
+  await expect(pageA.locator('.presence-bar')).toBeVisible({ timeout: 30_000 });
+
+  await caretAfter(pageA, 'keep this line');
+  await pageA.keyboard.type(' zululeft', { delay: 20 });
+  // Well inside the 800 ms save delay.
+  await a.close();
+
+  await expect.poll(async () => (await readNote(pageB, file)).includes('zululeft'),
+    { timeout: 20_000, message: 'text typed just before the saver left never reached the file' }).toBe(true);
+  await expect(pageB.locator('.editor-wrapper .ProseMirror')).toContainText('zululeft');
+  await b.close();
+});
+
+test('an outside change merges into a note people are editing', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { a, b, pageA, pageB } = await setup(browser);
+  const file = `collab-outside-${Date.now()}.md`;
+  await putNote(pageA, file, '# Outside\n\nfirst\n\nsecond\n');
+  await openInLive(pageA, file);
+  await openInLive(pageB, file);
+  await expect(pageA.locator('.presence-bar')).toBeVisible({ timeout: 30_000 });
+  await watchForConflictBanner(pageA);
+  await watchForConflictBanner(pageB);
+
+  await caretAfter(pageA, 'first');
+  await pageA.keyboard.type(' typedinroom', { delay: 20 });
+
+  // What the CLI does: a plain PUT that knows nothing about the room.
+  await pageB.evaluate(async ({ ns, file }) => {
+    const t = localStorage.getItem('mdnest_token');
+    const url = `/api/note?ns=${encodeURIComponent(ns)}&path=${encodeURIComponent(file)}`;
+    const cur = await (await fetch(url, { headers: { Authorization: 'Bearer ' + t } })).text();
+    await fetch(url, { method: 'PUT', headers: { Authorization: 'Bearer ' + t }, body: cur.replace(/\n*$/, '\n\nadded by the cli\n') });
+  }, { ns: NS, file });
+
+  await expect.poll(async () => {
+    const disk = await readNote(pageA, file);
+    return disk.includes('typedinroom') && disk.includes('added by the cli');
+  }, { timeout: 25_000, message: 'the file lost either the room text or the outside change' }).toBe(true);
+  for (const page of [pageA, pageB]) {
+    await expect(page.locator('.editor-wrapper .ProseMirror')).toContainText('added by the cli', { timeout: 15_000 });
+    await expect(page.locator('.editor-wrapper .ProseMirror')).toContainText('typedinroom');
+  }
+  expect(await pageA.evaluate(() => window.__mdnestSawConflict)).toBe(false);
+  expect(await pageB.evaluate(() => window.__mdnestSawConflict)).toBe(false);
+  await b.close(); await a.close();
+});
+
+test('typing in a shared note keeps the front matter byte for byte', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { a, b, pageA, pageB } = await setup(browser);
+  const file = `collab-fm-${Date.now()}.md`;
+  const fm = '---\ntitle: Front matter stays\ntags: [x, y]\nweird:   spacing\n---\n\n';
+  await putNote(pageA, file, fm + 'body line\n');
+  await openInLive(pageA, file);
+  await openInLive(pageB, file);
+  await expect(pageA.locator('.presence-bar')).toBeVisible({ timeout: 30_000 });
+  await caretAfter(pageB, 'body line');
+  await pageB.keyboard.type(' edited', { delay: 20 });
+  await expect.poll(async () => (await readNote(pageA, file)).includes('edited'), { timeout: 20_000 }).toBe(true);
+  const disk = await readNote(pageA, file);
+  expect(disk.startsWith(fm), `front matter changed:\n${disk}`).toBe(true);
+  await b.close(); await a.close();
+});
+
+test('moving the folder of a shared note closes the room and never re-creates the old file', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { a, b, pageA, pageB } = await setup(browser);
+  const dir = `collab-move-${Date.now()}`;
+  const file = `${dir}/note.md`;
+  await pageA.evaluate(async ({ ns, dir }) => {
+    const t = localStorage.getItem('mdnest_token');
+    await fetch(`/api/folder?ns=${encodeURIComponent(ns)}&path=${encodeURIComponent(dir)}`, { method: 'POST', headers: { Authorization: 'Bearer ' + t } });
+  }, { ns: NS, dir });
+  await putNote(pageA, file, '# Move\n\nbefore the move\n');
+  await openInLive(pageA, file);
+  await openInLive(pageB, file);
+  await expect(pageA.locator('.presence-bar')).toBeVisible({ timeout: 30_000 });
+
+  await pageA.evaluate(async ({ ns, dir }) => {
+    const t = localStorage.getItem('mdnest_token');
+    const r = await fetch(`/api/move?ns=${encodeURIComponent(ns)}&from=${encodeURIComponent(dir)}&to=${encodeURIComponent(dir + '-moved')}`, { method: 'POST', headers: { Authorization: 'Bearer ' + t } });
+    if (!r.ok) throw new Error('move ' + r.status);
+  }, { ns: NS, dir });
+
+  for (const page of [pageA, pageB]) {
+    await expect(page.locator('[data-testid=missing-note-banner]')).toBeVisible({ timeout: 15_000 });
+  }
+  // Typing now must not write the old path back.
+  await pageB.locator('.editor-wrapper .ProseMirror').click().catch(() => {});
+  await pageB.keyboard.type(' after', { delay: 20 }).catch(() => {});
+  await pageB.waitForTimeout(3000);
+  if (NOTES_DIR) expect(fs.existsSync(path.join(NOTES_DIR, NS, file)), 'the old path was re-created').toBe(false);
+  await b.close(); await a.close();
+});
+
+test('Basic mode switches to Live while someone else is in the note', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { a, b, pageA, pageB } = await setup(browser);
+  const file = `collab-basic-${Date.now()}.md`;
+  await putNote(pageA, file, '# Basic\n\ntext\n');
+  await pageA.goto(`/#${NS}/${file}`);
+  await expect(pageA.locator('.toolbar-path')).toContainText(file, { timeout: 20_000 });
+  await pageA.locator('.toolbar button', { hasText: /^Basic$/ }).click();
+  await expect(pageA.locator('.editor-wrapper textarea')).toBeVisible({ timeout: 20_000 });
+
+  await openInLive(pageB, file);
+  await expect(pageA.locator('.editor-wrapper .ProseMirror')).toBeVisible({ timeout: 30_000 });
+  await expect(pageA.locator('.toolbar button', { hasText: /^Basic$/ })).toBeDisabled();
+
+  await b.close();
+  // Alone again: Basic comes back (the presence list holds a leaver briefly).
+  await expect(pageA.locator('.editor-wrapper textarea')).toBeVisible({ timeout: 60_000 });
+  await a.close();
+});

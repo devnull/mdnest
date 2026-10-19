@@ -1065,17 +1065,20 @@ function App() {
         setSharedDisabled(true);
         setMissingNote({ ns: selectedNsRef.current, path: currentPathRef.current });
         break;
-      case 'error':
+      case 'error': {
         setSharedDisabled(true);
-        setNotice({
-          kind: 'error',
-          text: ev.error === 'room-full'
-            ? 'Too many people are in this note to edit it together. It is read-only for you; reload to try again.'
-            : ev.error === 'no-write'
-              ? 'You can no longer save this note.'
-              : 'Shared editing stopped for this note (it grew too large). Reload to continue.',
-        });
+        if (ev.error === 'missing') {
+          setMissingNote({ ns: selectedNsRef.current, path: currentPathRef.current });
+          break;
+        }
+        const why = {
+          'room-full': 'Too many people are in this note to edit it together. It is read-only for you; reload to try again.',
+          'no-write': 'You can no longer save this note.',
+          'server-full': 'The server is holding too many shared notes right now. This note is read-only for you; reload in a while.',
+        };
+        setNotice({ kind: 'error', text: why[ev.error] || 'Shared editing stopped for this note (it grew too large). Reload to continue.' });
         break;
+      }
       default:
     }
   }, []);
@@ -1133,6 +1136,7 @@ function App() {
     if (!sharedSession || !userInfo) return;
     const me = presenceUsers.find((u) => u.id === userInfo.id);
     sharedSession.setUser({ id: userInfo.id, name: userInfo.username, color: me?.color || '#89b4fa' });
+    sharedSession.setPeople(presenceUsers);
   }, [sharedSession, presenceUsers, userInfo]);
 
   // Editor reports in a shared note: only mirror the text for the preview,

@@ -75,7 +75,8 @@ describe('frames', () => {
     const upd = decodeServerFrame(new Uint8Array([TAG_UPDATE, 0, 0, 0, 0, 0, 0, 0, 5, 1, 2]));
     expect(upd.seq).toBe(5);
     expect([...upd.payload]).toEqual([1, 2]);
-    const aw = decodeServerFrame(new Uint8Array([TAG_AWARENESS, 3]));
+    const aw = decodeServerFrame(new Uint8Array([TAG_AWARENESS, 0, 0, 1, 2, 3]));
+    expect(aw.userId).toBe(258);
     expect([...aw.payload]).toEqual([3]);
     const st = decodeServerFrame(new Uint8Array([TAG_STATE, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 9, 0, 0, 0, 2, 4, 5]));
     expect(st.seq).toBe(2);

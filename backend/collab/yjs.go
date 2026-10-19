@@ -27,7 +27,10 @@ import (
 // Frames, server to client:
 //
 //	[1][seq u64][update]        a relayed update and its position in the log
-//	[2][awareness]              a relayed awareness update
+//	[2][userID u32][awareness]  a relayed awareness update, stamped with the
+//	                            sender's account id by the server: clients
+//	                            label a cursor from that id, never from the
+//	                            name inside the update, which the sender wrote
 //	[4][lastSeq u64]{[len u32][update]}*   the whole log, sent once on join
 //
 // Control messages are JSON text frames: yjs-hello, yjs-saved and yjs-leave
@@ -53,6 +56,10 @@ var (
 	// YjsMaxLogBytes is the most update data one room keeps. An update that
 	// would pass it is refused; the saver is asked to compact well before.
 	YjsMaxLogBytes = 32 << 20
+	// YjsMaxTotalBytes caps update data across every room on the server,
+	// so many rooms (or rooms kept after everyone left) cannot add up to an
+	// unbounded amount of memory.
+	YjsMaxTotalBytes = 256 << 20
 	// YjsMaxFrameBytes is the largest single frame accepted (a big paste or a
 	// snapshot). The websocket read limit is set to this for every
 	// connection when shared editing is on.
@@ -132,6 +139,13 @@ func (h *Hub) YjsHello(ns, path string, c *Conn) {
 	defer h.ymu.Unlock()
 	r := h.rooms[key]
 	if r == nil {
+		// A room only for a note that exists: joining needs read access to
+		// the path, but not that a file is there, and an empty room for any
+		// made-up path would still cost memory once someone writes to it.
+		if h.noteExists != nil && !h.noteExists(ns, path) {
+			sendControl(c, yjsControl{Type: "yjs-error", Error: "missing"})
+			return
+		}
 		r = &yjsRoom{key: key, members: make(map[*Conn]*yjsMember)}
 		h.rooms[key] = r
 	}
@@ -217,6 +231,12 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 			sendControl(c, yjsControl{Type: "yjs-error", Error: "room-too-big"})
 			return
 		}
+		if h.yjsBytes+len(upd) > YjsMaxTotalBytes {
+			log.Printf("collab: shared editing memory budget reached (%d bytes in %d rooms), refusing an update from %s", h.yjsBytes, len(h.rooms), c.User.Username)
+			sendControl(c, yjsControl{Type: "yjs-error", Error: "server-full"})
+			return
+		}
+		h.yjsBytes += len(upd)
 		r.seq++
 		m.ownSent++
 		m.lastUpdate = time.Now()
@@ -240,9 +260,13 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 			sendControl(r.saver, yjsControl{Type: "yjs-compact"})
 		}
 	case yjsTagAwareness:
+		frame := make([]byte, 5+len(data)-1)
+		frame[0] = yjsTagAwareness
+		binary.BigEndian.PutUint32(frame[1:5], uint32(c.User.ID))
+		copy(frame[5:], data[1:])
 		for o := range r.members {
 			if o != c {
-				o.SendReliable(data)
+				o.SendReliable(frame)
 			}
 		}
 	case yjsTagSnapshot:
@@ -273,6 +297,7 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 		}
 		log.Printf("collab: %s: compacted %d entries / %d bytes into %d bytes (+%d later entries)",
 			key, len(r.log), r.bytes, len(snap), len(kept)-1)
+		h.yjsBytes += size - r.bytes
 		r.log, r.bytes, r.compacted, r.asked = kept, size, len(snap), false
 	}
 }
@@ -371,7 +396,7 @@ func (h *Hub) YjsLeave(ns, path string, c *Conn) {
 		return
 	}
 	if !r.hasUnsaved() {
-		delete(h.rooms, key)
+		h.dropRoomLocked(key, r)
 		return
 	}
 	log.Printf("collab: WARNING %s: the last person left with unsaved updates (%d bytes); keeping the room %s for someone to save it",
@@ -381,7 +406,7 @@ func (h *Hub) YjsLeave(ns, path string, c *Conn) {
 		h.ymu.Lock()
 		defer h.ymu.Unlock()
 		if h.rooms[key] == room && len(room.members) == 0 {
-			delete(h.rooms, key)
+			h.dropRoomLocked(key, room)
 			log.Printf("collab: WARNING %s: dropped a room with unsaved updates after %s; the file holds the last saved text", key, yjsUnsavedGrace)
 		}
 	})
@@ -453,7 +478,7 @@ func (h *Hub) closeRoom(key, reason string) {
 	if r.freeTimer != nil {
 		r.freeTimer.Stop()
 	}
-	delete(h.rooms, key)
+	h.dropRoomLocked(key, r)
 	for c := range r.members {
 		sendControl(c, yjsControl{Type: "yjs-closed", Reason: reason})
 	}
@@ -547,3 +572,15 @@ func SharedEditingEnabled(setting, role string) bool {
 	}
 	return true
 }
+
+// dropRoomLocked removes a room and returns its bytes to the server budget.
+// Caller holds ymu.
+func (h *Hub) dropRoomLocked(key string, r *yjsRoom) {
+	if h.rooms[key] == r {
+		delete(h.rooms, key)
+		h.yjsBytes -= r.bytes
+	}
+}
+
+// SetNoteExists lets the hub refuse a room for a note that is not there.
+func (h *Hub) SetNoteExists(fn func(ns, path string) bool) { h.noteExists = fn }

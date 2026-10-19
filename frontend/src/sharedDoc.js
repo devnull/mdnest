@@ -81,6 +81,13 @@ export class SharedSession {
     this.disabled = false;
     this.editor = null;
     this.ownEtags = new Set();
+    // Cursor labels. The name inside an awareness update is whatever the
+    // sender wrote, so it is never shown: the server stamps each relayed
+    // update with the sender's account id (owners: awareness client id ->
+    // account id) and the label comes from the presence list (people:
+    // account id -> { username, color }), which the server also wrote.
+    this.owners = new Map();
+    this.people = new Map();
     this.saveTimer = null;
     this.saving = null;
     this.savePending = false;
@@ -142,6 +149,15 @@ export class SharedSession {
       ctx.update(prosePluginsCtx, (ps) => ps.filter((p) => !String(p.key || '').startsWith('history$')));
       const svc = ctx.get(collabServiceCtx);
       svc.bindDoc(this.doc).setAwareness(this.awareness);
+      svc.mergeOptions({
+        yCursorOpts: {
+          cursorBuilder: (_user, clientId) => this._cursorDom(clientId),
+          selectionBuilder: (_user, clientId) => ({
+            style: `background-color: ${this._person(clientId).color}40`,
+            class: 'ProseMirror-yjs-selection',
+          }),
+        },
+      });
       if (seeding) {
         this.doc.transact(() => {
           if (this.initial.frontMatter) this.fm.insert(0, this.initial.frontMatter);
@@ -256,7 +272,7 @@ export class SharedSession {
       Y.applyUpdate(this.doc, f.payload, REMOTE);
       this._maybeBind();
     } else if (f.tag === TAG_AWARENESS) {
-      applyAwarenessUpdate(this.awareness, f.payload, REMOTE);
+      applyAwarenessUpdate(this.awareness, f.payload, { remoteUser: f.userId });
     }
   }
 
@@ -271,6 +287,11 @@ export class SharedSession {
   }
 
   _onAwareness({ added, updated, removed }, origin) {
+    if (origin && typeof origin === 'object' && 'remoteUser' in origin) {
+      for (const id of added.concat(updated)) this.owners.set(id, origin.remoteUser);
+      for (const id of removed) this.owners.delete(id);
+      return;
+    }
     if (origin === REMOTE || this.closed || this.left) return;
     const changed = added.concat(updated, removed);
     if (changed.length) this.client.sendBinary(encodeFrame(TAG_AWARENESS, encodeAwarenessUpdate(this.awareness, changed)));
@@ -286,10 +307,32 @@ export class SharedSession {
   // awareness timeout.
   forgetUser(userId) {
     const gone = [];
-    this.awareness.getStates().forEach((st, clientId) => {
-      if (clientId !== this.doc.clientID && st?.user?.id === userId) gone.push(clientId);
+    this.owners.forEach((uid, clientId) => {
+      if (uid === userId && clientId !== this.doc.clientID) gone.push(clientId);
     });
     if (gone.length) removeAwarenessStates(this.awareness, gone, REMOTE);
+  }
+
+  // The presence list, as the server sent it: [{ id, username, color }].
+  setPeople(users) {
+    this.people = new Map((users || []).map((u) => [u.id, u]));
+  }
+
+  _person(clientId) {
+    const p = this.people.get(this.owners.get(clientId));
+    return { name: p?.username || 'someone', color: /^#[0-9a-f]{6}$/i.test(p?.color || '') ? p.color : '#89b4fa' };
+  }
+
+  _cursorDom(clientId) {
+    const { name, color } = this._person(clientId);
+    const caret = document.createElement('span');
+    caret.className = 'ProseMirror-yjs-cursor';
+    caret.style.borderColor = color;
+    const label = document.createElement('div');
+    label.style.backgroundColor = color;
+    label.textContent = name;
+    caret.append(label);
+    return caret;
   }
 
   // --- Saving ----------------------------------------------------------------

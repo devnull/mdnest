@@ -41,9 +41,11 @@ type Hub struct {
 	remote map[string]map[string]remotePresence
 
 	// Shared editing (Yjs) rooms, see yjs.go. shared is set once at startup.
-	shared bool
-	ymu    sync.Mutex
-	rooms  map[string]*yjsRoom
+	shared     bool
+	ymu        sync.Mutex
+	rooms      map[string]*yjsRoom
+	yjsBytes   int                         // update bytes held across all rooms
+	noteExists func(ns, path string) bool // nil: rooms for any path (tests)
 }
 
 // remotePresence is a peer instance's advertised user-set for a note, with an

@@ -133,9 +133,10 @@ func TestYjsUpdatesAreRelayedWithSeq(t *testing.T) {
 	if fa, _ := drain(a); len(fa) != 0 {
 		t.Fatalf("the sender must not get its own update back: %v", fa)
 	}
-	// Awareness is relayed as-is and never stored.
+	// Awareness is relayed stamped with the sender's account id (clients
+	// name cursors from it, not from the update), and never stored.
 	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagAwareness, 7})
-	if fb, _ := drain(b); len(fb) != 1 || !bytes.Equal(fb[0], []byte{yjsTagAwareness, 7}) {
+	if fb, _ := drain(b); len(fb) != 1 || !bytes.Equal(fb[0], []byte{yjsTagAwareness, 0, 0, 0, 1, 7}) {
 		t.Fatalf("awareness relay: %v", fb)
 	}
 	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 {
@@ -450,5 +451,45 @@ func TestYjsFramesGoOutAsBinary(t *testing.T) {
 	}
 	if frameType([]byte(`{"type":"presence"}`)) != websocket.MessageText {
 		t.Fatal("JSON must stay a text frame")
+	}
+}
+
+func TestYjsNoRoomForAMissingNote(t *testing.T) {
+	h := sharedHub()
+	h.SetNoteExists(func(ns, p string) bool { return p == "real.md" })
+	c := newTestConn(1, "c")
+	h.HandleMessage("ns", "made-up.md", c, false, []byte(`{"type":"yjs-hello"}`))
+	_, ctrl := drain(c)
+	if !hasCtrl(ctrl, "yjs-error", "missing") {
+		t.Fatalf("a room was offered for a note that does not exist: %+v", ctrl)
+	}
+	if _, ok := h.roomStats("ns", "made-up.md"); ok {
+		t.Fatal("room created for a missing note")
+	}
+	h.HandleMessage("ns", "real.md", c, false, []byte(`{"type":"yjs-hello"}`))
+	if _, ok := h.roomStats("ns", "real.md"); !ok {
+		t.Fatal("no room for a real note")
+	}
+}
+
+func TestYjsServerWideBudget(t *testing.T) {
+	defer func(n int) { YjsMaxTotalBytes = n }(YjsMaxTotalBytes)
+	YjsMaxTotalBytes = 10
+	h := sharedHub()
+	a, b := newTestConn(1, "a"), newTestConn(2, "b")
+	h.HandleMessage("ns", "one.md", a, false, []byte(`{"type":"yjs-hello"}`))
+	h.HandleMessage("ns", "two.md", b, false, []byte(`{"type":"yjs-hello"}`))
+	h.HandleMessage("ns", "one.md", a, true, upd(make([]byte, 8)...))
+	h.HandleMessage("ns", "two.md", b, true, upd(make([]byte, 8)...))
+	_, cb := drain(b)
+	if !hasCtrl(cb, "yjs-error", "server-full") {
+		t.Fatalf("second room's update should hit the server budget: %+v", cb)
+	}
+	// Freeing a room gives its bytes back.
+	h.HandleMessage("ns", "one.md", a, false, []byte(`{"type":"yjs-saved","recv":0,"own":1}`))
+	h.YjsLeave("ns", "one.md", a)
+	h.HandleMessage("ns", "two.md", b, true, upd(make([]byte, 8)...))
+	if st, _ := h.roomStats("ns", "two.md"); st.Entries != 1 {
+		t.Fatalf("budget not returned when a room was freed: %+v", st)
 	}
 }

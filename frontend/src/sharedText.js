@@ -179,7 +179,11 @@ export function decodeServerFrame(u8) {
     if (u8.length < 9) return null;
     return { tag, seq: getU64(view, 1), payload: u8.subarray(9) };
   }
-  if (tag === TAG_AWARENESS) return { tag, payload: u8.subarray(1) };
+  if (tag === TAG_AWARENESS) {
+    // Stamped by the server with the sender's account id.
+    if (u8.length < 5) return null;
+    return { tag, userId: view.getUint32(1), payload: u8.subarray(5) };
+  }
   if (tag === TAG_STATE) {
     if (u8.length < 9) return null;
     const entries = [];
