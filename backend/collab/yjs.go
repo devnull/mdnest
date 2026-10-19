@@ -282,7 +282,14 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 		}
 	case yjsTagSnapshot:
 		// Trusted from the saver only: the same trust as its PUT of the file.
-		if c != r.saver || len(data) < 10 {
+		// And only when asked, and never larger than the updates the room
+		// holds now, so a snapshot cannot be used to hold more memory than
+		// the updates (each counted against its author) already did.
+		if c != r.saver || !r.asked {
+			return
+		}
+		if len(data) < 10 || len(data)-9 > r.bytes {
+			r.asked = false // ask again once the log grows
 			return
 		}
 		ack := binary.BigEndian.Uint64(data[1:9])

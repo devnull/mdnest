@@ -516,7 +516,8 @@ func TestYjsPerUserBudget(t *testing.T) {
 }
 
 func TestYjsSnapshotIsHeldToTheCaps(t *testing.T) {
-	defer func(n int) { YjsMaxLogBytes = n }(YjsMaxLogBytes)
+	defer func(n, m int) { YjsMaxLogBytes, yjsCompactMin = n, m }(YjsMaxLogBytes, yjsCompactMin)
+	yjsCompactMin = 1
 	h := sharedHub()
 	a := newTestConn(1, "a")
 	hello(h, a)
@@ -528,7 +529,9 @@ func TestYjsSnapshotIsHeldToTheCaps(t *testing.T) {
 		t.Fatalf("an oversized snapshot replaced the log: %+v", st)
 	}
 	YjsMaxLogBytes = 1 << 20
-	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 2, 'S'})
+	// The refusal re-arms the request; the next update asks again.
+	h.HandleMessage("ns", "a.md", a, true, upd(3))
+	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 3, 'S'})
 	// A later snapshot may not claim an older point than the last one.
 	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 1, 'T'})
 	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 || st.Bytes != 1 {
@@ -557,5 +560,36 @@ func TestYjsRefusedSnapshotIsAskedForAgain(t *testing.T) {
 	_, ctrl = drain(a)
 	if !hasCtrl(ctrl, "yjs-compact", "") {
 		t.Fatal("after a refused snapshot the saver is never asked again")
+	}
+}
+
+func TestYjsSnapshotOnlyWhenAskedAndNoBigger(t *testing.T) {
+	defer func(n int) { yjsCompactMin = n }(yjsCompactMin)
+	h := sharedHub()
+	a := newTestConn(1, "a")
+	hello(h, a)
+	h.HandleMessage("ns", "a.md", a, true, upd(1, 1, 1, 1))
+	// Not asked yet (the log is under the compaction threshold).
+	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 1, 'S'})
+	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 || st.Bytes != 4 {
+		t.Fatalf("an unrequested snapshot was taken: %+v", st)
+	}
+	yjsCompactMin = 2
+	h.HandleMessage("ns", "a.md", a, true, upd(2))
+	drain(a)
+	// Asked, but bigger than the 5 bytes the room holds.
+	h.HandleMessage("ns", "a.md", a, true, append([]byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 2}, make([]byte, 6)...))
+	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 2 {
+		t.Fatalf("a snapshot bigger than the log was taken: %+v", st)
+	}
+	h.HandleMessage("ns", "a.md", a, true, upd(3)) // asks again
+	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 3, 'S'})
+	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 {
+		t.Fatalf("the requested snapshot was refused: %+v", st)
+	}
+	// One request, one snapshot.
+	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 3, 'T'})
+	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 || st.Bytes != 1 {
+		t.Fatalf("a second snapshot without a request was taken: %+v", st)
 	}
 }
