@@ -42,6 +42,14 @@ const SAVE_DELAY = 800;
 // checks the file: long enough for a just-replaced saver's meta to arrive.
 const OUTSIDE_GRACE = 1200;
 const REMOTE = 'remote';
+// What the editor tells the person when shared editing stops for them.
+const ERROR_TEXT = {
+  'room-full': 'Too many people are in this note to edit it together. It is read-only for you; reload to try again.',
+  'no-write': 'You can no longer save this note.',
+  'server-full': 'The server is holding too many shared notes right now. This note is read-only for you; reload in a while.',
+  'room-too-big': 'Shared editing stopped for this note (it grew too large). Reload to continue.',
+};
+const errorEvent = (error) => ({ type: 'error', error, message: ERROR_TEXT[error] || ERROR_TEXT['room-too-big'] });
 const META = 'meta';
 
 let nextId = 1;
@@ -237,7 +245,7 @@ export class SharedSession {
       case 'yjs-error':
         this.disabled = true;
         this._cancelSave();
-        this.onEvent({ type: 'error', error: msg.error });
+        this.onEvent(errorEvent(msg.error));
         break;
       case 'yjs-closed':
         this.onEvent({ type: 'closed', reason: msg.reason });
@@ -401,7 +409,7 @@ export class SharedSession {
           this.destroy();
         } else if (e.name === 'PermissionError' || e.status === 403) {
           this.disabled = true;
-          this.onEvent({ type: 'error', error: 'no-write' });
+          this.onEvent(errorEvent('no-write'));
         } else {
           console.error('mdnest: shared save failed, will retry', e);
           setTimeout(() => this._scheduleSave(0), 3000);

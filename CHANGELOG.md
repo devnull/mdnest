@@ -6,6 +6,35 @@ All notable changes to mdnest are documented here.
 
 ## v4.8.10 (in progress)
 
+### Added
+
+- **Shared editing for markdown notes.** When two or more people have the
+  same note open in the Live editor, they now edit one shared copy of it
+  (using Yjs) instead of each saving their own copy of the whole file. Before,
+  people typing at the same time saw "This file was modified by another user"
+  and lost their newest words after a refresh. Now everyone's typing shows up
+  for the others as they type, other people's cursors show with their names,
+  Undo only undoes your own edits, and one browser in the note saves the
+  merged text with the normal save. Opening a note and leaving it never
+  rewrites the file. Changes made outside mdnest while people edit (git-sync,
+  the CLI, an agent, a history restore) are merged in for everyone. Front
+  matter is kept out of the editor and saved byte for byte. While someone
+  else is in a note, the Basic editor switches to Live. Drawings, chats and
+  slide decks keep the old behaviour. On with `ENABLE_LIVE_COLLAB=true`;
+  `SHARED_EDITING=false` turns it off. **Single backend only**: it is off on
+  `MDNEST_ROLE=app`, and the Helm chart (0.6.0) turns it off with more than
+  one backend replica. See [docs/collab.md](docs/collab.md).
+
+### Fixed
+
+- **Typing could be lost or overwritten on the old save path too.** The last
+  keystrokes of a burst were never sent to others, someone else's live typing
+  was treated as saved text, and a tab with unsaved edits took over the newer
+  version's tag, so its next save silently replaced the other person's work.
+  Now the last keystrokes are always sent, other people's typing is only
+  shown, and a save made on an old version is refused and checked instead.
+  This still matters where shared editing does not apply.
+
 ## v4.8.9: A README for teams and their AI agents
 
 A documentation-only release. The README, which is the GitHub front page, now

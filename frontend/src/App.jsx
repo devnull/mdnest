@@ -1071,12 +1071,7 @@ function App() {
           setMissingNote({ ns: selectedNsRef.current, path: currentPathRef.current });
           break;
         }
-        const why = {
-          'room-full': 'Too many people are in this note to edit it together. It is read-only for you; reload to try again.',
-          'no-write': 'You can no longer save this note.',
-          'server-full': 'The server is holding too many shared notes right now. This note is read-only for you; reload in a while.',
-        };
-        setNotice({ kind: 'error', text: why[ev.error] || 'Shared editing stopped for this note (it grew too large). Reload to continue.' });
+        setNotice({ kind: 'error', text: ev.message });
         break;
       }
       default:
@@ -1337,7 +1332,7 @@ function App() {
           remoteLiveRef.current = null;
           etagRef.current = etag;
         } else {
-          // User has unsaved changes AND file changed externally — show
+          // User has unsaved changes AND file changed externally: show
           // conflict. Keep the old etag (see handleFileChanged): the next
           // save must be refused, not silently win.
           setConflictBanner({ username: 'an external source' });

@@ -59,6 +59,7 @@ flowchart TD
 - **Identity** in multi-mode is provided by one of three exclusive plugins: `local` (username + password + Postgres-backed TOTP), `sso` (generic OIDC relying party), or `firebase` (Firebase Auth + Firestore TOTP). Pick one with `USER_PROVIDER=` in `mdnest.conf`. Single-mode skips this layer entirely.
 - **PostgreSQL** is added by `setup.sh` automatically when `AUTH_MODE=multi`. It stores user accounts, access grants, and (v3.5.0+) namespace-admin assignments. **Note content is never in the database** — files on disk are the source of truth in every mode.
 - **Live collaboration** uses an in-process `collab.Hub` that fans WebSocket events between connected clients (presence, cursors, tree-changed events, comment broadcasts). Gated on `ENABLE_LIVE_COLLAB=true` in multi mode. For active/active (multiple backend replicas), set `REDIS_URL` — the Hub then fans events across replicas over a Redis backplane instead of only within one process, so presence and edits stay consistent cluster-wide.
+- **Shared editing** (on with live collaboration, `SHARED_EDITING=false` turns it off) gives each open markdown note a Yjs room in the Hub (`collab/yjs.go`): the server relays and stores opaque updates and never parses them, and one browser per room saves the merged markdown through the normal `PUT /api/note`. **Single backend only**: rooms live in one process's memory, so it is off on `MDNEST_ROLE=app` and in a multi-replica Helm install. See [collab.md](collab.md).
 - **git-sync** is an optional sidecar that commits + pulls + pushes each namespace on a timer. Auto-enabled when SSH keys are present in `git-sync/keys/`.
 
 ---
@@ -148,6 +149,8 @@ mdnest/
     collab/
       hub.go                   # In-process WebSocket fanout: presence, cursors, tree
                                # change events, comment broadcasts.
+      yjs.go                   # Shared editing rooms: relay + in-memory log of Yjs
+                               # updates, seeder/saver roles, snapshots, caps.
 
   frontend/
     Dockerfile                 # Multi-stage: node:20-alpine build → nginx:alpine serve.
@@ -158,6 +161,9 @@ mdnest/
                                # URL hash routing, editor mode, live-collab wiring,
                                # admin-panel scope derivation, dev-login pill.
       api.js                   # All fetch calls. JWT in localStorage, 401 → clear + reload.
+      sharedDoc.js             # Shared editing session (lazy chunk): one Y.Doc per note,
+                               # bound to the Live editor; saving, outside-change merge.
+      sharedText.js            # Pure helpers: front matter split, 3-way merge, frames.
       mermaid-config.js        # Shared mermaid init + theme.
       firebase-config.js       # Firebase SDK lazy init (Firebase mode only).
       components/

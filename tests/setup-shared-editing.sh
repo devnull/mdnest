@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# setup.sh SHARED_EDITING plumbing test — no network, no Docker
+# setup.sh SHARED_EDITING plumbing test: no network, no Docker
 # ─────────────────────────────────────────────────────────────
 # SHARED_EDITING has to travel mdnest.conf -> setup.sh -> .env -> the backend,
 # which treats anything but an explicit "false" as on. A value that never
