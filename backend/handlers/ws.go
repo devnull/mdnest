@@ -72,6 +72,12 @@ func (h *WSHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A Yjs snapshot or a big paste is larger than the library's 32 KB
+	// default read limit, which would close the socket mid-edit.
+	if h.hub.SharedEditing() {
+		ws.SetReadLimit(collab.YjsMaxFrameBytes)
+	}
+
 	conn := collab.NewConn(ws, uc.ID, uc.Username)
 	conn.ReadOnly = readOnly
 	h.hub.Join(ns, path, conn)

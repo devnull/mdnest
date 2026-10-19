@@ -67,6 +67,8 @@ OIDC_GROUPS_CLAIM=""
 # Agent approvals let a browser answer an agent's permission prompt, so an
 # exported shell variable must not turn them on either.
 ENABLE_AGENT_APPROVALS=""
+# Shared editing: only mdnest.conf sets it.
+SHARED_EDITING=""
 # Folder download / transfer limits: only mdnest.conf sets them.
 DOWNLOAD_MAX_FILES=""
 DOWNLOAD_MAX_MB=""
@@ -101,6 +103,7 @@ while IFS= read -r line; do
     POSTGRES_USER) POSTGRES_USER="$value" ;;
     POSTGRES_PASSWORD) POSTGRES_PASSWORD="$value" ;;
     ENABLE_LIVE_COLLAB) ENABLE_LIVE_COLLAB="$value" ;;
+    SHARED_EDITING) SHARED_EDITING="$value" ;;
     ENABLE_TASK_BOARD) ENABLE_TASK_BOARD="$value" ;;
     ENABLE_MARP) ENABLE_MARP="$value" ;;
     ENABLE_MARP_THEMES) ENABLE_MARP_THEMES="$value" ;;
@@ -246,6 +249,14 @@ if [ "$USER_PROVIDER" = "sso" ]; then
   esac
 fi
 
+case "${SHARED_EDITING:-true}" in
+  true|false) ;;
+  *)
+    echo "Error: SHARED_EDITING must be true or false (got '${SHARED_EDITING}')."
+    exit 1
+    ;;
+esac
+
 case "${ENABLE_AGENT_APPROVALS:-false}" in
   true)  echo "Agent approvals: on (experimental). Agents on opted-in machines can ask for approval here." ;;
   false) ;;
@@ -317,6 +328,7 @@ DOWNLOAD_MAX_MB=${DOWNLOAD_MAX_MB:-100}
 DOWNLOAD_MAX_CONCURRENT=${DOWNLOAD_MAX_CONCURRENT:-2}
 AUTH_MODE=${AUTH_MODE}
 ENABLE_LIVE_COLLAB=${ENABLE_LIVE_COLLAB:-false}
+SHARED_EDITING=${SHARED_EDITING:-true}
 ENABLE_TASK_BOARD=${ENABLE_TASK_BOARD:-false}
 ENABLE_MARP=${ENABLE_MARP:-false}
 ENABLE_MARP_THEMES=${ENABLE_MARP_THEMES:-false}

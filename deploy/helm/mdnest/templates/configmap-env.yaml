@@ -54,6 +54,9 @@ data:
   DOWNLOAD_MAX_CONCURRENT: {{ .Values.download.maxConcurrent | quote }}
   {{- if eq .Values.auth.mode "multi" }}
   ENABLE_LIVE_COLLAB: {{ .Values.collab.enabled | ternary "true" "false" | quote }}
+  {{- /* Shared editing keeps each note's room in one backend's memory, so it
+         is forced off with more than one replica (see values.yaml). */}}
+  SHARED_EDITING: {{ and .Values.collab.sharedEditing (not (or (gt (int .Values.backend.replicaCount) 1) .Values.backend.autoscaling.enabled)) | ternary "true" "false" | quote }}
   POSTGRES_HOST: {{ required "postgres.host is required when auth.mode=multi" .Values.postgres.host | quote }}
   POSTGRES_PORT: {{ .Values.postgres.port | quote }}
   POSTGRES_DB: {{ .Values.postgres.database | quote }}

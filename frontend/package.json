@@ -1,7 +1,7 @@
 {
   "name": "mdnest-frontend",
   "private": true,
-  "version": "4.8.9",
+  "version": "4.8.10",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,17 +19,22 @@
     "@milkdown/crepe": "^7.20.0",
     "@milkdown/ctx": "^7.20.0",
     "@milkdown/plugin-clipboard": "^7.20.0",
+    "@milkdown/plugin-collab": "7.22.2",
     "@milkdown/plugin-history": "^7.20.0",
     "@milkdown/plugin-listener": "^7.20.0",
     "@milkdown/preset-commonmark": "^7.20.0",
     "@milkdown/preset-gfm": "^7.20.0",
     "@milkdown/react": "^7.20.0",
+    "diff-match-patch": "1.0.5",
     "dompurify": "^3.4.12",
     "firebase": "^12.12.1",
     "marked": "^15.0.0",
     "mermaid": "^11.4.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "y-prosemirror": "1.3.7",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

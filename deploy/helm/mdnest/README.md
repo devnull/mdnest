@@ -33,6 +33,7 @@ Single instance is the default and matches upstream mdnest exactly. Active/activ
 | `auth.mode` | `single` (file auth, no DB) | `multi` (external PostgreSQL) |
 | `backend.replicaCount` | `1` | `> 1` |
 | Live collaboration | off | `collab.enabled=true` |
+| Shared editing (one document per note) | on with collab | forced **off** (single replica only, see below) |
 | Cross-replica sync | n/a | Redis (`collab.redis.*`) |
 | Notes storage | `local` PVC (RWO) | `storage.backend=git` (per-pod, no RWX) **or** a shared RWX PVC |
 
@@ -97,6 +98,10 @@ postgres:
   user: mdnest
   existingSecret: mdnest-postgres      # provides POSTGRES_PASSWORD
 ```
+
+### Shared editing is single-replica only
+
+> **Warning.** Shared editing (`collab.sharedEditing`, on whenever `collab.enabled=true`) keeps each note's editing room in one backend's memory. With more than one backend replica the chart sets `SHARED_EDITING=false`, and notes are saved as whole files the way they were before. Running shared editing across replicas needs sticky routing (everyone in the same note on the same backend, for example ingress hashing on the note path) or a shared room store. Neither is supported yet; the planned route is Redis, which already relays collaboration messages between replicas.
 
 ### Live collaboration + Redis (active/active)
 
@@ -261,6 +266,7 @@ All traffic goes to the frontend Service, which proxies `/api` and `/api/ws` (We
 | collab.redis.tls | bool | `false` | Use TLS (`rediss://`) in compose mode. |
 | collab.redis.url | string | `""` | Full Redis URL (`redis://` / `rediss://`) -> `REDIS_URL`. When set, presence/events sync across replicas (active/active); empty = single instance. |
 | collab.redis.username | string | `"default"` | Redis username (compose mode). |
+| collab.sharedEditing | bool | `true` | Shared editing (`SHARED_EDITING`): people in one markdown note edit one shared document. Single replica only: forced off when `backend.replicaCount > 1` or autoscaling is on (see the warning above). |
 | commonAnnotations | object | `{}` | Annotations added to every resource created by the chart. |
 | commonLabels | object | `{}` | Labels added to every resource created by the chart. |
 | download | object | `{"maxConcurrent":2,"maxFiles":500,"maxMB":100}` | --------------------------------------------------------------------------- |

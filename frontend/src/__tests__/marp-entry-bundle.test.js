@@ -16,7 +16,9 @@ import { dirname, join, resolve } from 'path';
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Packages that must never be in the entry bundle.
-const LAZY_ONLY = [/^@marp-team\//, /^firebase(\/|$)/];
+// Shared editing (yjs, y-prosemirror, y-protocols, the Milkdown collab
+// plugin, diff-match-patch) is loaded only when a note is edited together.
+const LAZY_ONLY = [/^@marp-team\//, /^firebase(\/|$)/, /^yjs$/, /^y-prosemirror/, /^y-protocols/, /^@milkdown\/plugin-collab/, /^diff-match-patch/];
 
 const STATIC_IMPORT = /^\s*(?:import|export)\s+(?:[^'"`;]*?\s+from\s+)?['"]([^'"]+)['"]/gm;
 
@@ -52,7 +54,7 @@ function entryOffenders(entry) {
 }
 
 describe('entry bundle', () => {
-  it('statically reaches neither Marp nor the Firebase SDK', () => {
+  it('statically reaches neither Marp, the Firebase SDK nor the shared editing libraries', () => {
     const { offenders, files } = entryOffenders(join(SRC, 'main.jsx'));
     expect(files).toBeGreaterThan(20); // the walk really followed App's imports
     expect(offenders).toEqual([]);

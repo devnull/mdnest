@@ -18,6 +18,10 @@ class CollabClient {
     this._cursorThrottle = null;
     this._status = 'disconnected';
     this._connId = 0; // incremented on each connect, used to discard stale onclose
+    // Shared editing (sharedDoc.js) attaches here: binary frames go to
+    // onBinary, and onOpen runs after every (re)connect so the room is joined
+    // again. One shared session at a time, the one for the open note.
+    this.shared = null; // { onBinary(u8), onOpen() }
   }
 
   _setStatus(status) {
@@ -51,6 +55,7 @@ class CollabClient {
 
     try {
       this.ws = new WebSocket(url);
+      this.ws.binaryType = 'arraybuffer';
     } catch (e) {
       this._setStatus('disconnected');
       this._scheduleReconnect();
@@ -60,9 +65,14 @@ class CollabClient {
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;
       this._setStatus('connected');
+      if (this.shared) this.shared.onOpen();
     };
 
     this.ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        if (this.shared) this.shared.onBinary(new Uint8Array(e.data));
+        return;
+      }
       try {
         const msg = JSON.parse(e.data);
         if (this.onMessage) this.onMessage(msg);
@@ -100,6 +110,13 @@ class CollabClient {
 
   disconnect() {
     this.closed = true;
+    // A trailing content send belongs to the note being left; sending it
+    // after connect() would put this note's text into the next note's room.
+    if (this._contentThrottle) {
+      clearTimeout(this._contentThrottle);
+      this._contentThrottle = null;
+    }
+    this._pendingContent = undefined;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -127,12 +144,23 @@ class CollabClient {
     this._send({ type: 'selection', fromLine, fromCh, toLine, toCh });
   }
 
-  // Send live content (throttled to every 200ms)
+  // Send live content, at most every 200ms. The LAST call inside a throttle
+  // window is always sent when the window closes: without that trailing send
+  // the final keystrokes of a burst never reached anyone else.
   sendContent(content) {
-    if (this._contentThrottle) return;
+    if (this._contentThrottle) {
+      this._pendingContent = content;
+      return;
+    }
     this._send({ type: 'content', content });
+    this._pendingContent = undefined;
     this._contentThrottle = setTimeout(() => {
       this._contentThrottle = null;
+      if (this._pendingContent !== undefined) {
+        const next = this._pendingContent;
+        this._pendingContent = undefined;
+        this.sendContent(next);
+      }
     }, 200);
   }
 
@@ -140,6 +168,20 @@ class CollabClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
+  }
+
+  // Shared editing: a JSON control message or a binary Yjs frame. Returns
+  // false when the socket is not open (the session resyncs on reconnect).
+  sendJSON(msg) {
+    if (!this.connected) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
+  }
+
+  sendBinary(u8) {
+    if (!this.connected) return false;
+    this.ws.send(u8);
+    return true;
   }
 
   get connected() {
