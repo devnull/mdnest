@@ -1126,6 +1126,17 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sharedKey, canWriteCurrent]);
 
+  // The editor stays read-only until the shared document arrives. If the
+  // live connection is down that never happens, so say why and what works.
+  useEffect(() => {
+    if (!sharedSession || sharedBound || sharedDisabled) return undefined;
+    const t = setTimeout(() => setNotice({
+      kind: 'error',
+      text: 'Waiting for the live connection to edit this note together. Basic mode works without it.',
+    }), 6000);
+    return () => clearTimeout(t);
+  }, [sharedSession, sharedBound, sharedDisabled]);
+
   // Our cursor colour comes from the presence list (the server picks it).
   useEffect(() => {
     if (!sharedSession || !userInfo) return;
