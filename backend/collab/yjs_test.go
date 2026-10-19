@@ -534,7 +534,28 @@ func TestYjsSnapshotIsHeldToTheCaps(t *testing.T) {
 	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 || st.Bytes != 1 {
 		t.Fatalf("snapshots piled up: %+v", st)
 	}
-	if h.yjsBytes != 1 || h.userBytes[1] != 1 {
+	if h.yjsBytes != 1 || h.userBytes[1] != 0 || h.userBytes[roomUID] != 1 {
 		t.Fatalf("budget not kept in step with compaction: total=%d user=%d", h.yjsBytes, h.userBytes[1])
+	}
+}
+
+func TestYjsRefusedSnapshotIsAskedForAgain(t *testing.T) {
+	defer func(n, m int) { yjsCompactMin, YjsMaxLogBytes = n, m }(yjsCompactMin, YjsMaxLogBytes)
+	yjsCompactMin = 2
+	h := sharedHub()
+	a := newTestConn(1, "a")
+	hello(h, a)
+	h.HandleMessage("ns", "a.md", a, true, upd(1, 1, 1))
+	_, ctrl := drain(a)
+	if !hasCtrl(ctrl, "yjs-compact", "") {
+		t.Fatal("not asked to compact")
+	}
+	YjsMaxLogBytes = 5
+	h.HandleMessage("ns", "a.md", a, true, append([]byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 1}, make([]byte, 9)...))
+	YjsMaxLogBytes = 1 << 20
+	h.HandleMessage("ns", "a.md", a, true, upd(2))
+	_, ctrl = drain(a)
+	if !hasCtrl(ctrl, "yjs-compact", "") {
+		t.Fatal("after a refused snapshot the saver is never asked again")
 	}
 }

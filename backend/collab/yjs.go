@@ -82,11 +82,16 @@ type yjsEntry struct {
 	seq  uint64
 	data []byte
 	from *Conn // nil for a snapshot
-	uid  int   // account the bytes are counted against
+	uid  int   // account the bytes are counted against (roomUID for a snapshot)
 	own  int   // 1-based count of `from`'s own updates up to this one
 	// saved: a yjs-saved has confirmed the file holds this update.
 	saved bool
 }
+
+// roomUID is the budget bucket of a snapshot. A snapshot holds everyone's
+// text, so it counts toward the room and server caps but not toward the
+// saver's own share.
+const roomUID = -1
 
 type yjsMember struct {
 	joined     time.Time
@@ -291,7 +296,7 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 				snapSaved = false
 			}
 		}
-		kept := []yjsEntry{{seq: ack, data: snap, uid: c.User.ID, saved: snapSaved}}
+		kept := []yjsEntry{{seq: ack, data: snap, uid: roomUID, saved: snapSaved}}
 		size := len(snap)
 		var dropped []yjsEntry
 		for _, e := range r.log {
@@ -304,23 +309,21 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 				dropped = append(dropped, e)
 			}
 		}
-		// A snapshot is held to the same caps as the updates it replaces.
-		dropBytes, dropMine := 0, 0
+		// A snapshot is held to the room and server caps, like the updates
+		// it replaces.
+		dropBytes := 0
 		for _, e := range dropped {
 			dropBytes += len(e.data)
-			if e.uid == c.User.ID {
-				dropMine += len(e.data)
-			}
 		}
-		if size > YjsMaxLogBytes || h.yjsBytes-dropBytes+len(snap) > YjsMaxTotalBytes ||
-			h.userBytes[c.User.ID]-dropMine+len(snap) > YjsMaxUserBytes {
+		if size > YjsMaxLogBytes || h.yjsBytes-dropBytes+len(snap) > YjsMaxTotalBytes {
 			log.Printf("collab: %s: refusing a %d-byte snapshot from %s (over a cap)", key, len(snap), c.User.Username)
+			r.asked = false // ask again once the log grows
 			return
 		}
 		for _, e := range dropped {
 			h.account(e.uid, -len(e.data))
 		}
-		h.account(c.User.ID, len(snap))
+		h.account(roomUID, len(snap))
 		log.Printf("collab: %s: compacted %d entries / %d bytes into %d bytes (+%d later entries)",
 			key, len(r.log), r.bytes, len(snap), len(kept)-1)
 		r.log, r.bytes, r.compacted, r.asked, r.snapSeq = kept, size, len(snap), false, ack
@@ -344,6 +347,9 @@ func (r *yjsRoom) pickSaver(typist *Conn) {
 func (r *yjsRoom) setSaver(c *Conn) {
 	old := r.saver
 	r.saver = c
+	if old != c {
+		r.asked = false // a pending compaction request went to the old saver
+	}
 	if old != nil && old != c {
 		if _, still := r.members[old]; still {
 			sendControl(old, yjsControl{Type: "yjs-role", Saver: false})
