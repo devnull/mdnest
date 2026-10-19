@@ -4,7 +4,14 @@ All notable changes to mdnest are documented here.
 
 ---
 
-## v4.8.10 (in progress)
+## v4.8.10: Shared editing, and no more lost typing when two people edit a note
+
+Fixes an old and serious bug: when two people edited the same note, typing
+could be lost or silently overwritten by the other person's save. This release
+fixes that on the existing save path, and adds shared editing, where everyone
+in a note edits one copy and sees each other's typing and cursors. Shared
+editing needs `ENABLE_LIVE_COLLAB=true` and a single backend. Upgrading is
+recommended for anyone who uses live collaboration.
 
 ### Added
 
