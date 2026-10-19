@@ -45,6 +45,7 @@ type Hub struct {
 	ymu        sync.Mutex
 	rooms      map[string]*yjsRoom
 	yjsBytes   int                         // update bytes held across all rooms
+	userBytes  map[int]int                 // the same, per account
 	noteExists func(ns, path string) bool // nil: rooms for any path (tests)
 }
 

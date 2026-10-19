@@ -493,3 +493,48 @@ func TestYjsServerWideBudget(t *testing.T) {
 		t.Fatalf("budget not returned when a room was freed: %+v", st)
 	}
 }
+
+func TestYjsPerUserBudget(t *testing.T) {
+	defer func(n int) { YjsMaxUserBytes = n }(YjsMaxUserBytes)
+	YjsMaxUserBytes = 10
+	h := sharedHub()
+	a1, a2, b := newTestConn(1, "a"), newTestConn(1, "a"), newTestConn(2, "b")
+	h.HandleMessage("ns", "one.md", a1, false, []byte(`{"type":"yjs-hello"}`))
+	h.HandleMessage("ns", "two.md", a2, false, []byte(`{"type":"yjs-hello"}`))
+	h.HandleMessage("ns", "two.md", b, false, []byte(`{"type":"yjs-hello"}`))
+	h.HandleMessage("ns", "one.md", a1, true, upd(make([]byte, 8)...))
+	h.HandleMessage("ns", "two.md", a2, true, upd(make([]byte, 8)...))
+	_, ca := drain(a2)
+	if !hasCtrl(ca, "yjs-error", "server-full") {
+		t.Fatalf("one account passed its share across rooms: %+v", ca)
+	}
+	// Someone else is not affected.
+	h.HandleMessage("ns", "two.md", b, true, upd(make([]byte, 8)...))
+	if st, _ := h.roomStats("ns", "two.md"); st.Entries != 1 {
+		t.Fatalf("another account was refused: %+v", st)
+	}
+}
+
+func TestYjsSnapshotIsHeldToTheCaps(t *testing.T) {
+	defer func(n int) { YjsMaxLogBytes = n }(YjsMaxLogBytes)
+	h := sharedHub()
+	a := newTestConn(1, "a")
+	hello(h, a)
+	h.HandleMessage("ns", "a.md", a, true, upd(1))
+	h.HandleMessage("ns", "a.md", a, true, upd(2))
+	YjsMaxLogBytes = 4
+	h.HandleMessage("ns", "a.md", a, true, append([]byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 2}, make([]byte, 10)...))
+	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 2 {
+		t.Fatalf("an oversized snapshot replaced the log: %+v", st)
+	}
+	YjsMaxLogBytes = 1 << 20
+	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 2, 'S'})
+	// A later snapshot may not claim an older point than the last one.
+	h.HandleMessage("ns", "a.md", a, true, []byte{yjsTagSnapshot, 0, 0, 0, 0, 0, 0, 0, 1, 'T'})
+	if st, _ := h.roomStats("ns", "a.md"); st.Entries != 1 || st.Bytes != 1 {
+		t.Fatalf("snapshots piled up: %+v", st)
+	}
+	if h.yjsBytes != 1 || h.userBytes[1] != 1 {
+		t.Fatalf("budget not kept in step with compaction: total=%d user=%d", h.yjsBytes, h.userBytes[1])
+	}
+}

@@ -60,6 +60,9 @@ var (
 	// so many rooms (or rooms kept after everyone left) cannot add up to an
 	// unbounded amount of memory.
 	YjsMaxTotalBytes = 256 << 20
+	// YjsMaxUserBytes caps what one account's updates may hold across all
+	// rooms, so one person cannot use up the server-wide budget for everyone.
+	YjsMaxUserBytes = 64 << 20
 	// YjsMaxFrameBytes is the largest single frame accepted (a big paste or a
 	// snapshot). The websocket read limit is set to this for every
 	// connection when shared editing is on.
@@ -79,6 +82,7 @@ type yjsEntry struct {
 	seq  uint64
 	data []byte
 	from *Conn // nil for a snapshot
+	uid  int   // account the bytes are counted against
 	own  int   // 1-based count of `from`'s own updates up to this one
 	// saved: a yjs-saved has confirmed the file holds this update.
 	saved bool
@@ -99,7 +103,8 @@ type yjsRoom struct {
 	seeded    bool
 	seeder    *Conn
 	saver     *Conn
-	compacted int // size of the last snapshot
+	compacted int    // size of the last snapshot
+	snapSeq   uint64 // ack of the last snapshot; a new one must not go back
 	asked     bool
 	freeTimer *time.Timer
 }
@@ -231,16 +236,17 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 			sendControl(c, yjsControl{Type: "yjs-error", Error: "room-too-big"})
 			return
 		}
-		if h.yjsBytes+len(upd) > YjsMaxTotalBytes {
-			log.Printf("collab: shared editing memory budget reached (%d bytes in %d rooms), refusing an update from %s", h.yjsBytes, len(h.rooms), c.User.Username)
+		if h.yjsBytes+len(upd) > YjsMaxTotalBytes || h.userBytes[c.User.ID]+len(upd) > YjsMaxUserBytes {
+			log.Printf("collab: shared editing memory budget reached (%d bytes in %d rooms, %d for %s), refusing an update",
+				h.yjsBytes, len(h.rooms), h.userBytes[c.User.ID], c.User.Username)
 			sendControl(c, yjsControl{Type: "yjs-error", Error: "server-full"})
 			return
 		}
-		h.yjsBytes += len(upd)
+		h.account(c.User.ID, len(upd))
 		r.seq++
 		m.ownSent++
 		m.lastUpdate = time.Now()
-		r.log = append(r.log, yjsEntry{seq: r.seq, data: upd, from: c, own: m.ownSent})
+		r.log = append(r.log, yjsEntry{seq: r.seq, data: upd, from: c, uid: c.User.ID, own: m.ownSent})
 		r.bytes += len(upd)
 		r.seeded = true
 		r.seeder = nil
@@ -275,30 +281,49 @@ func (h *Hub) YjsFrame(ns, path string, c *Conn, data []byte) {
 			return
 		}
 		ack := binary.BigEndian.Uint64(data[1:9])
-		snap := append([]byte(nil), data[9:]...)
-		if ack > r.seq {
+		if ack > r.seq || ack < r.snapSeq {
 			return
 		}
+		snap := append([]byte(nil), data[9:]...)
 		snapSaved := true
 		for _, e := range r.log {
 			if e.seq <= ack && !e.saved {
 				snapSaved = false
 			}
 		}
-		kept := []yjsEntry{{seq: ack, data: snap, saved: snapSaved}}
+		kept := []yjsEntry{{seq: ack, data: snap, uid: c.User.ID, saved: snapSaved}}
 		size := len(snap)
+		var dropped []yjsEntry
 		for _, e := range r.log {
 			// Later entries stay. Some may already be in the snapshot;
 			// applying a Yjs update twice changes nothing.
 			if e.seq > ack {
 				kept = append(kept, e)
 				size += len(e.data)
+			} else {
+				dropped = append(dropped, e)
 			}
 		}
+		// A snapshot is held to the same caps as the updates it replaces.
+		dropBytes, dropMine := 0, 0
+		for _, e := range dropped {
+			dropBytes += len(e.data)
+			if e.uid == c.User.ID {
+				dropMine += len(e.data)
+			}
+		}
+		if size > YjsMaxLogBytes || h.yjsBytes-dropBytes+len(snap) > YjsMaxTotalBytes ||
+			h.userBytes[c.User.ID]-dropMine+len(snap) > YjsMaxUserBytes {
+			log.Printf("collab: %s: refusing a %d-byte snapshot from %s (over a cap)", key, len(snap), c.User.Username)
+			return
+		}
+		for _, e := range dropped {
+			h.account(e.uid, -len(e.data))
+		}
+		h.account(c.User.ID, len(snap))
 		log.Printf("collab: %s: compacted %d entries / %d bytes into %d bytes (+%d later entries)",
 			key, len(r.log), r.bytes, len(snap), len(kept)-1)
-		h.yjsBytes += size - r.bytes
-		r.log, r.bytes, r.compacted, r.asked = kept, size, len(snap), false
+		r.log, r.bytes, r.compacted, r.asked, r.snapSeq = kept, size, len(snap), false, ack
 	}
 }
 
@@ -578,7 +603,22 @@ func SharedEditingEnabled(setting, role string) bool {
 func (h *Hub) dropRoomLocked(key string, r *yjsRoom) {
 	if h.rooms[key] == r {
 		delete(h.rooms, key)
-		h.yjsBytes -= r.bytes
+		for _, e := range r.log {
+			h.account(e.uid, -len(e.data))
+		}
+	}
+}
+
+// account adds (or with a negative n, returns) bytes to the server-wide and
+// per-account budgets. Caller holds ymu.
+func (h *Hub) account(uid, n int) {
+	h.yjsBytes += n
+	if h.userBytes == nil {
+		h.userBytes = make(map[int]int)
+	}
+	h.userBytes[uid] += n
+	if h.userBytes[uid] <= 0 {
+		delete(h.userBytes, uid)
 	}
 }
 

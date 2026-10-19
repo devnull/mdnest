@@ -10,12 +10,15 @@
 // What the document holds:
 //   - the editor content (y-prosemirror's 'prosemirror' fragment),
 //   - 'frontmatter': the YAML block, kept out of the editor (sharedText.js),
-//   - 'meta': { etag, base, baseMd } for the last time the room and the file
-//     agreed. etag is what the next save sends as If-Match, base is the file
-//     text then, baseMd is what the editor serialized then. A save happens
-//     only when the editor's markdown differs from baseMd, which is why
-//     opening a note and leaving it never rewrites the file. baseMd null means
-//     "the room has text the file does not", so the saver writes it.
+//   - 'meta', the last time the room and the file agreed: etag (what the
+//     next save sends as If-Match), base (the file text then), baseMd (what
+//     the editor serialized then, stored only when it differs from base),
+//     dirty ("the room has text the file does not", so the saver writes
+//     it). A save happens only when the editor's markdown differs from
+//     baseMd, which is why opening a note and leaving it never rewrites the
+//     file. Plain values, replaced on each save: Yjs drops a replaced value
+//     completely when the saver compacts the room, which keeps the snapshot
+//     small over a long session (frontend/scripts/measure-shared-room.mjs).
 //
 // Changes from outside the room (git-sync, the CLI, an agent, a restore) are
 // merged by the saver: a three-way merge of base, the room's text and the
@@ -181,9 +184,7 @@ export class SharedSession {
         if (this.closed) return;
         const md = this.fullMarkdown();
         this.doc.transact(() => {
-          this.meta.set('etag', this.initialEtag);
-          this.meta.set('base', this.initialBase);
-          this.meta.set('baseMd', this.initialBase === this.initialText ? md : null);
+          this._setAgreed(this.initialEtag, this.initialBase, md, this.initialBase !== this.initialText);
         }, META);
         if (this.initialBase === this.initialText) this._sendSaved(this.lastSeq, this.ownSent);
         else if (this.saver) this._scheduleSave(0);
@@ -357,19 +358,19 @@ export class SharedSession {
 
   // Whether the room holds text the file does not.
   dirty() {
-    if (!this.bound || !this.meta.has('baseMd')) return false;
+    if (!this.bound || !this.meta.get('hasBase')) return false;
     const md = this.fullMarkdown();
-    return md !== null && md !== this.meta.get('baseMd');
+    return md !== null && !this._unchanged(md);
   }
 
   async _save() {
     if (this.saving) { this.savePending = true; return this.saving; }
-    if (!this.saver || this.closed || this.disabled || !this.bound || !this.meta.has('baseMd')) return undefined;
+    if (!this.saver || this.closed || this.disabled || !this.bound || !this.meta.get('hasBase')) return undefined;
     const md = this.fullMarkdown();
     if (md === null) return undefined;
     const recv = this.lastSeq;
     const own = this.ownSent;
-    if (md === this.meta.get('baseMd')) {
+    if (this._unchanged(md)) {
       this._sendSaved(recv, own);
       return undefined;
     }
@@ -385,11 +386,7 @@ export class SharedSession {
         if (this.closed) return;
         if (res.etag) this.ownEtags.add(res.etag);
         const untouched = this.ownSent === own;
-        this.doc.transact(() => {
-          this.meta.set('etag', res.etag || null);
-          this.meta.set('base', md);
-          this.meta.set('baseMd', md);
-        }, META);
+        this._setAgreed(res.etag || null, md, md, false);
         // The meta update is our next own update; it is covered too when
         // nothing was typed here during the PUT.
         this._sendSaved(recv, untouched ? this.ownSent : own);
@@ -445,7 +442,7 @@ export class SharedSession {
 
   async _checkOutside() {
     if (this.checking) { this.recheck = true; return this.checking; }
-    if (!this.saver || this.closed || !this.bound || !this.meta.has('baseMd')) return undefined;
+    if (!this.saver || this.closed || !this.bound || !this.meta.get('hasBase')) return undefined;
     this.checking = (async () => {
       let file;
       try { file = await getNote(this.ns, this.path); } catch (e) {
@@ -464,14 +461,10 @@ export class SharedSession {
         return;
       }
       const ours = this.fullMarkdown();
-      const clean = ours === this.meta.get('baseMd');
+      const clean = this._unchanged(ours);
       const merged = clean ? text : mergeThreeWay(base, ours, text);
       this._applyFull(merged);
-      this.doc.transact(() => {
-        this.meta.set('etag', etag);
-        this.meta.set('base', text);
-        this.meta.set('baseMd', clean ? this.fullMarkdown() : null);
-      }, META);
+      this._setAgreed(etag, text, this.fullMarkdown(), !clean);
       if (!clean) this._scheduleSave(0);
     })();
     try { await this.checking; } finally {
@@ -479,6 +472,26 @@ export class SharedSession {
       if (this.recheck) { this.recheck = false; this._checkOutside(); }
     }
     return undefined;
+  }
+
+  // Whether `md` is what the room and the file last agreed on.
+  _unchanged(md) {
+    if (this.meta.get('dirty')) return false;
+    return md === (this.meta.has('baseMd') ? this.meta.get('baseMd') : this.meta.get('base'));
+  }
+
+  _setAgreed(etag, base, baseMd, dirty) {
+    this.doc.transact(() => {
+      this.meta.set('etag', etag);
+      if (this.meta.get('base') !== base) this.meta.set('base', base);
+      if (baseMd === base) {
+        if (this.meta.has('baseMd')) this.meta.delete('baseMd');
+      } else if (this.meta.get('baseMd') !== baseMd) {
+        this.meta.set('baseMd', baseMd || '');
+      }
+      if (!this.meta.get('hasBase')) this.meta.set('hasBase', true);
+      if (!!this.meta.get('dirty') !== dirty) this.meta.set('dirty', dirty);
+    }, META);
   }
 
   _applyFull(text) {
