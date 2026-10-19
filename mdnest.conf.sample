@@ -76,6 +76,13 @@ GIT_AUTHOR_EMAIL=you@example.com
 # Enables real-time cursor presence and conflict detection via WebSocket.
 # Also required for the inline comments feature (/api/comments).
 # ENABLE_LIVE_COLLAB=false
+#
+# Shared editing (on by default when ENABLE_LIVE_COLLAB=true): people in the
+# same markdown note edit one shared document in the Live editor, and one of
+# them saves it, so nobody's typing is lost. Single server only: it is always
+# off on MDNEST_ROLE=app, and must stay off with several backend replicas.
+# Set false to keep the older whole-file saves.
+# SHARED_EDITING=true
 
 # Task board (optional, works in both single and multi mode)
 # Projects the GitHub-flavoured `- [ ]` checkboxes already in your notes into a

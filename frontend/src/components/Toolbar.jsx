@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
-function Toolbar({ currentPath, onToggleSidebar, onRevealInTree, onChangePassword, onManageUsers, onRename, onDelete, viewMode, onViewModeChange, editorMode, onEditorModeChange, onRefresh, wsStatus, commentCount, onToggleComments, onToggleStickies, stickiesOpen, onSetBoardActive, boardActive, onSetChatsActive, chatsActive, chatsBackLabel, marpLocked, liveLockReason, mobileView, onMobileViewChange, drawingDoc, drawingSource, onDrawingSourceChange, theme, onToggleTheme, presence, approvalCount = 0, onShowApprovals }) {
+function Toolbar({ currentPath, onToggleSidebar, onRevealInTree, onChangePassword, onManageUsers, onRename, onDelete, viewMode, onViewModeChange, editorMode, onEditorModeChange, onRefresh, wsStatus, commentCount, onToggleComments, onToggleStickies, stickiesOpen, onSetBoardActive, boardActive, onSetChatsActive, chatsActive, chatsBackLabel, marpLocked, liveLockReason, basicLockReason, mobileView, onMobileViewChange, drawingDoc, drawingSource, onDrawingSourceChange, theme, onToggleTheme, presence, approvalCount = 0, onShowApprovals }) {
   const [refreshing, setRefreshing] = useState(false);
   // Phone overflow menu. On a phone the bar keeps only what is used per note
   // (sidebar, filename, comments, the mode switch); every other control lives
@@ -162,7 +162,8 @@ function Toolbar({ currentPath, onToggleSidebar, onRevealInTree, onChangePasswor
               <button
                 className={editorMode === 'basic' && !mobilePreview ? 'active' : ''}
                 onClick={() => { onEditorModeChange('basic'); onMobileViewChange?.('editor'); }}
-                title="Plain text editor"
+                disabled={!!basicLockReason}
+                title={basicLockReason || 'Plain text editor'}
               >Basic</button>
               <button
                 className={editorMode === 'live' && !mobilePreview ? 'active' : ''}

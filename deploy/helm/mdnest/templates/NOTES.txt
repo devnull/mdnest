@@ -3,8 +3,18 @@ mdnest {{ .Chart.AppVersion }} has been deployed as release "{{ .Release.Name }}
 Deployment mode: {{ if or (gt (int .Values.backend.replicaCount) 1) .Values.backend.autoscaling.enabled }}ACTIVE/ACTIVE ({{ if .Values.backend.autoscaling.enabled }}autoscaled {{ .Values.backend.autoscaling.minReplicas }}-{{ .Values.backend.autoscaling.maxReplicas }}{{ else }}{{ .Values.backend.replicaCount }} backend replicas{{ end }}){{ else }}single instance (active/passive){{ end }}
 Auth mode:       {{ .Values.auth.mode }}
 Live collab:     {{ if and (eq .Values.auth.mode "multi") .Values.collab.enabled }}enabled{{ else }}disabled{{ end }}
+{{- $ha := or (gt (int .Values.backend.replicaCount) 1) .Values.backend.autoscaling.enabled }}
+Shared editing:  {{ if not (and (eq .Values.auth.mode "multi") .Values.collab.enabled .Values.collab.sharedEditing) }}disabled{{ else if $ha }}OFF (forced: more than one backend replica){{ else }}enabled (single replica){{ end }}
 Redis backplane: {{ if and .Values.collab.enabled (or .Values.collab.redis.url .Values.collab.redis.existingSecret) }}enabled{{ else }}disabled{{ end }}
 git-sync:        {{ if .Values.gitSync.enabled }}enabled (1 replica){{ else }}disabled{{ end }}
+{{- if and (eq .Values.auth.mode "multi") .Values.collab.enabled .Values.collab.sharedEditing $ha }}
+
+WARNING: shared editing is turned off because this release runs more than one
+backend replica. Each note's editing room lives in one backend's memory, so it
+needs sticky routing (everyone in the same note on the same backend) or a
+shared room store, and neither is supported yet (Redis is the planned route).
+Notes are saved as whole files instead, the way they were before shared editing.
+{{- end }}
 
 Access the app:
 {{- if .Values.ingress.enabled }}

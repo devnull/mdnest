@@ -231,8 +231,13 @@ export default function LiveEditorCrepe({
   onHighlightClick,
   onWikiLink,
   wikiIndex,
+  // A SharedSession (sharedDoc.js) when this note is edited together. Fixed
+  // for the life of the editor: the parent remounts the editor when it
+  // changes, because the collab plugin must be registered before create().
+  shared,
 }) {
   const rootRef = useRef(null);
+  const sharedRef = useRef(shared || null);
   const paneRef = useRef(null);
   const crepeRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -333,9 +338,12 @@ export default function LiveEditorCrepe({
     };
 
     lastPropContentRef.current = content;
+    const sharedSession = sharedRef.current;
     const crepe = new Crepe({
       root: rootRef.current,
-      defaultValue: content,
+      // Shared: the body only (front matter is kept out of the editor), and
+      // only until the shared document is bound, which then replaces it.
+      defaultValue: sharedSession ? sharedSession.initial.body : content,
       features: {
         // Disable Crepe's floating selection toolbar — we render our own
         // persistent <LiveToolbar> above the editor.
@@ -434,6 +442,7 @@ export default function LiveEditorCrepe({
     tryUse(wikilinkDecorationPlugin, 'wikilinkDecorationPlugin');
     tryUse(composedMermaidPlugin, 'composedMermaidPlugin');
     tryUse(tableClickFixPlugin, 'tableClickFixPlugin');
+    if (sharedSession) tryUse(sharedSession.collabPlugin, 'collab');
 
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown, prev) => {
@@ -442,6 +451,13 @@ export default function LiveEditorCrepe({
         // round-trip byte-identical through the Live editor.
         const restored = restoreWikilinks(markdown);
         lastLocalContentRef.current = restored;
+        if (sharedRef.current) {
+          // Shared: saving is the session's job, decided by comparing with
+          // the last saved text, so every change (ours or someone else's) is
+          // simply reported for the preview, outline and comments.
+          if (markdown !== prev && onChangeRef.current) onChangeRef.current(restored);
+          return;
+        }
         // suppressSaveRef is armed only for the duration of a document
         // injection (Crepe's initial render and each replaceAll), because
         // re-serializing what we just put in would PUT the file back — and the
@@ -478,6 +494,19 @@ export default function LiveEditorCrepe({
       suppressSaveRef.current = false;
       setInnerEditor(crepe.editor);
       if (readOnly) crepe.setReadonly(true);
+      if (sharedSession) {
+        sharedSession.attachEditor({
+          editor: crepe.editor,
+          serialize: () => restoreWikilinks(crepe.getMarkdown()),
+          applyBody: (md) => {
+            try {
+              crepe.editor.action(applyExternalDoc(md));
+            } catch {
+              crepe.editor.action(replaceAll(md));
+            }
+          },
+        });
+      }
     }).catch((err) => {
       // eslint-disable-next-line no-console
       console.error('Crepe init failed:', err);
@@ -485,6 +514,7 @@ export default function LiveEditorCrepe({
 
     return () => {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      if (sharedSession) sharedSession.detachEditor();
       setInnerEditor(null);
       try {
         crepe.destroy();
@@ -593,6 +623,9 @@ export default function LiveEditorCrepe({
   useEffect(() => {
     if (!innerEditor || !crepeRef.current) return;
     if (content == null) return;
+    // Shared: the document arrives through Yjs, and `content` is only the
+    // parent echoing what this editor reported.
+    if (sharedRef.current) return;
     if (content === lastPropContentRef.current) return;
     if (content === lastLocalContentRef.current) return;
     lastPropContentRef.current = content;
@@ -1002,7 +1035,7 @@ export default function LiveEditorCrepe({
   return (
     <div ref={paneRef} className={`live-editor-pane${handlesHidden ? ' handles-hidden' : ''}`}>
       {readOnly && <div className="editor-readonly-bar">Read-only</div>}
-      {!readOnly && <LiveToolbar editor={innerEditor} handlesHidden={handlesHidden} onToggleHandles={toggleHandles} />}
+      {!readOnly && <LiveToolbar editor={innerEditor} handlesHidden={handlesHidden} onToggleHandles={toggleHandles} undoRedo={shared ? { undo: shared.undo, redo: shared.redo } : null} />}
       <div className="live-editor-wrapper" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <div ref={rootRef} className="live-editor-crepe-root" />
         {selectionPopup && !selectionPopup.hidden && onComment && (
