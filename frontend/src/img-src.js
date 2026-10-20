@@ -10,20 +10,37 @@
 // Pure module (no React, no api.js import) so it is unit-testable standalone;
 // Preview.jsx supplies the token from api.js getToken().
 //
-// "Already absolute" is the SAME test the Live editor's proxyDomURL uses, and
-// it must stay that way — the two renderers show the same note, so a src that
-// resolves in one and not the other is a broken image in exactly one mode.
-// The prefix form this replaced (`startsWith('http')`) treated any filename
-// beginning with those letters as an absolute URL, so `![](http-flow.png)` —
-// a perfectly ordinary uploaded screenshot — never got its /api/files/ prefix
-// and rendered broken in Preview while working in Live. It also missed
-// `blob:` and anything uppercased. Require the scheme's colon, and match
-// case-insensitively.
-const ABSOLUTE_SRC = /^(https?:|data:|blob:|\/)/i;
+// Explicit schemes and rooted URLs pass through without credentials, including
+// protocol-relative URLs and the backslash form browsers normalize to slashes.
+// A filename such as http-flow.png is still relative: require a scheme's colon
+// rather than treating every filename beginning with "http" as a remote URL.
+const ABSOLUTE_SRC = /^(?:[a-z][a-z\d+.-]*:|[\\/])/i;
+// Used only to parse relative paths; no request is made to this reserved host.
+const URL_BASE = 'https://mdnest.invalid';
 
 export function resolveImgSrc(href, baseDir, token) {
-  const src = href || '';
+  const src = typeof href === 'string' ? href.trim() : '';
   if (!src || ABSOLUTE_SRC.test(src)) return src;
-  const resolved = baseDir + src;
-  return token ? `${resolved}?token=${encodeURIComponent(token)}` : resolved;
+  try {
+    const url = new URL(baseDir + src, URL_BASE);
+    // Normalize before adding credentials: ../ must not move the token onto
+    // another endpoint, and an external base must never receive it.
+    if (url.origin !== URL_BASE || !url.pathname.startsWith('/api/files/')) return '';
+    if (token) url.searchParams.set('token', token);
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return '';
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Escape before HTML assembly. Quotes in a local image destination must not
+// turn its appended session token into an attacker-controlled srcset URL.
+export function renderImageHtml({ href, title, text }, baseDir, token) {
+  const src = resolveImgSrc(href, baseDir, token);
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${titleAttr} />`;
 }

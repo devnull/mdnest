@@ -8,7 +8,7 @@ import { sanitizeHtml, sanitizeSvg } from '../sanitize.js';
 import { extractDiagramText, copyPlainText } from '../mermaid-text.js';
 import { isExcalidrawDoc, noteRelativePath } from '../excalidraw.js';
 import { getNote, getToken } from '../api.js';
-import { resolveImgSrc } from '../img-src.js';
+import { renderImageHtml } from '../img-src.js';
 
 
 // Safety net for any render-time exception inside Preview (mostly marked, but
@@ -132,9 +132,7 @@ function renderMarkdownUnsafe(source, ns, notePath, pathIndex) {
         // query param — an <img> GET can't carry an Authorization header,
         // so without it every image in Preview 401s (the Live editor's
         // proxyDomURL already does this).
-        const src = resolveImgSrc(href, baseDir, getToken());
-        const titleAttr = title ? ` title="${title}"` : '';
-        return `<img src="${src}" alt="${text || ''}"${titleAttr} />`;
+        return renderImageHtml({ href, title, text }, baseDir, getToken());
       },
       code({ text, lang }) {
         const codeText = text || '';

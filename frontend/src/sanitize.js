@@ -36,6 +36,10 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 export function sanitizeHtml(dirty) {
   return DOMPurify.sanitize(dirty, {
     ADD_ATTR: ['target'],
+    // Note-authored selectors can inspect token-bearing image attributes and
+    // leak matches through remote CSS images. Inline formatting stays allowed;
+    // generated diagram styles use sanitizeSvg instead.
+    FORBID_TAGS: ['style'],
   });
 }
 
